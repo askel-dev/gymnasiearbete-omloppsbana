@@ -37,6 +37,11 @@ SAT_COLOR = (255, 230, 120)
 TRAIL_COLOR = (120, 210, 180)
 HUD_COLOR = (220, 230, 240)
 VEL_COLOR = (255, 120, 120)
+BUTTON_COLOR = (35, 55, 90)
+BUTTON_HOVER_COLOR = (70, 110, 160)
+BUTTON_TEXT_COLOR = (240, 245, 250)
+MENU_TITLE_COLOR = (220, 230, 255)
+MENU_SUBTITLE_COLOR = (150, 165, 200)
 
 PIXELS_PER_METER = 0.25 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
 MIN_PPM = 1e-7
@@ -78,6 +83,35 @@ def world_to_screen(x, y, ppm):
 def clamp(val, lo, hi):
     return max(lo, min(hi, val))
 
+
+class Button:
+    """Simple rectangular button with hover feedback and callbacks."""
+
+    def __init__(self, rect, text, callback, text_getter=None):
+        self.rect = pygame.Rect(rect)
+        self._text = text
+        self._callback = callback
+        self._text_getter = text_getter
+
+    def get_text(self):
+        if self._text_getter is not None:
+            return self._text_getter()
+        return self._text
+
+    def draw(self, surface, font):
+        mouse_pos = pygame.mouse.get_pos()
+        hovered = self.rect.collidepoint(mouse_pos)
+        color = BUTTON_HOVER_COLOR if hovered else BUTTON_COLOR
+        pygame.draw.rect(surface, color, self.rect, border_radius=8)
+        text_surf = font.render(self.get_text(), True, BUTTON_TEXT_COLOR)
+        text_rect = text_surf.get_rect(center=self.rect.center)
+        surface.blit(text_surf, text_rect)
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self._callback()
+
 # =======================
 #   HUVUDPROGRAM
 # =======================
@@ -87,6 +121,8 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 18)
+    title_font = pygame.font.SysFont("consolas", 40, bold=True)
+    subtitle_font = pygame.font.SysFont("consolas", 24)
 
     # Simuleringsstate
     r = R0.copy()
@@ -116,6 +152,82 @@ def main():
         accumulator = 0.0
         last_time = time.perf_counter()
 
+    state = "menu"
+
+    def start_simulation():
+        nonlocal state
+        reset()
+        state = "running"
+
+    def quit_app():
+        pygame.quit()
+        sys.exit()
+
+    menu_button_width = 260
+    menu_button_height = 56
+    menu_button_x = WIDTH // 2 - menu_button_width // 2
+    menu_button_y = HEIGHT // 2 - menu_button_height
+    menu_button_gap = 20
+
+    menu_buttons = [
+        Button(
+            (menu_button_x, menu_button_y, menu_button_width, menu_button_height),
+            "Start Simulation",
+            start_simulation,
+        ),
+        Button(
+            (
+                menu_button_x,
+                menu_button_y + menu_button_height + menu_button_gap,
+                menu_button_width,
+                menu_button_height,
+            ),
+            "Quit",
+            quit_app,
+        ),
+    ]
+
+    button_width = 140
+    button_height = 40
+    button_gap = 10
+
+    def toggle_pause():
+        nonlocal paused
+        paused = not paused
+
+    def toggle_trail():
+        nonlocal show_trail
+        show_trail = not show_trail
+
+    def slow_down():
+        nonlocal real_time_speed
+        real_time_speed = max(real_time_speed / 1.5, 0.1)
+
+    def speed_up():
+        nonlocal real_time_speed
+        real_time_speed = min(real_time_speed * 1.5, 10_000.0)
+
+    sim_buttons = [
+        Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if paused else "Pause"),
+        Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset),
+        Button(
+            (20, 20 + 2 * (button_height + button_gap), button_width, button_height),
+            "Trail",
+            toggle_trail,
+            lambda: "Trail: On" if show_trail else "Trail: Off",
+        ),
+        Button(
+            (20, 20 + 3 * (button_height + button_gap), button_width, button_height),
+            "Slower",
+            slow_down,
+        ),
+        Button(
+            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
+            "Faster",
+            speed_up,
+        ),
+    ]
+
     # ========= LOOP =========
     while True:
         # --- Input ---
@@ -123,26 +235,51 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    paused = not paused
-                elif event.key == pygame.K_r:
-                    reset()
-                elif event.key == pygame.K_t:
-                    show_trail = not show_trail
-                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
-                    ppm = clamp(ppm * 1.2, MIN_PPM, MAX_PPM)     # zoom in
-                elif event.key == pygame.K_MINUS:
-                    ppm = clamp(ppm / 1.2, MIN_PPM, MAX_PPM)     # zoom out
+                if event.key == pygame.K_ESCAPE:
+                    quit_app()
+                if state == "running":
+                    if event.key == pygame.K_SPACE:
+                        paused = not paused
+                    elif event.key == pygame.K_r:
+                        reset()
+                    elif event.key == pygame.K_t:
+                        show_trail = not show_trail
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
+                        ppm = clamp(ppm * 1.2, MIN_PPM, MAX_PPM)     # zoom in
+                    elif event.key == pygame.K_MINUS:
+                        ppm = clamp(ppm / 1.2, MIN_PPM, MAX_PPM)     # zoom out
 
-                # ---- Piltangenter styr simhastighet (ingen boost längre) ----
-                elif event.key == pygame.K_RIGHT:
-                    real_time_speed = min(real_time_speed * 1.5, 10_000.0)
-                elif event.key == pygame.K_LEFT:
-                    real_time_speed = max(real_time_speed / 1.5, 0.1)
-                elif event.key == pygame.K_UP:
-                    real_time_speed = min(real_time_speed * 2.0, 10_000.0)
-                elif event.key == pygame.K_DOWN:
-                    real_time_speed = max(real_time_speed / 2.0, 0.1)
+                    # ---- Piltangenter styr simhastighet (ingen boost längre) ----
+                    elif event.key == pygame.K_RIGHT:
+                        real_time_speed = min(real_time_speed * 1.5, 10_000.0)
+                    elif event.key == pygame.K_LEFT:
+                        real_time_speed = max(real_time_speed / 1.5, 0.1)
+                    elif event.key == pygame.K_UP:
+                        real_time_speed = min(real_time_speed * 2.0, 10_000.0)
+                    elif event.key == pygame.K_DOWN:
+                        real_time_speed = max(real_time_speed / 2.0, 0.1)
+            if state == "menu":
+                for btn in menu_buttons:
+                    btn.handle_event(event)
+            elif state == "running":
+                for btn in sim_buttons:
+                    btn.handle_event(event)
+
+        if state == "menu":
+            screen.fill(BG_COLOR)
+            title_surf = title_font.render("Omloppsbana i realtid", True, MENU_TITLE_COLOR)
+            subtitle_surf = subtitle_font.render("Välj ett alternativ för att starta", True, MENU_SUBTITLE_COLOR)
+            title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 150))
+            subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
+            screen.blit(title_surf, title_rect)
+            screen.blit(subtitle_surf, subtitle_rect)
+
+            for btn in menu_buttons:
+                btn.draw(screen, subtitle_font)
+
+            pygame.display.flip()
+            clock.tick(60)
+            continue
 
         # --- Fysik ackumulator ---
         now = time.perf_counter()
@@ -209,12 +346,16 @@ def main():
             f"energy = {eps: .3e} J/kg    e = {e:.4f}",
             "SPACE: paus | R: reset | T: trail | +/-: zoom",
             "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
+            "Knapparna till vänster speglar kontrollerna",
         ]
         y = 10
         for line in hud_lines:
             surf = font.render(line, True, HUD_COLOR)
             screen.blit(surf, (10, y))
             y += 20
+
+        for btn in sim_buttons:
+            btn.draw(screen, font)
 
         pygame.display.flip()
         clock.tick()
