@@ -4,6 +4,8 @@ import time
 import pygame
 import sys
 import numpy as np
+from collections import deque
+from itertools import islice
 
 # =======================
 #   FYSIK & KONSTANTER
@@ -23,6 +25,7 @@ DT_PHYS = 0.25                 # fysikens tidssteg (sekunder)
 REAL_TIME_SPEED = 60.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
 TRAIL_MAX = 99999              # punkter i spår
+TRAIL_DRAW_MAX = 2000          # max punkter att rita per frame
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
@@ -91,7 +94,7 @@ def main():
     t_sim = 0.0
     paused = False
     show_trail = True
-    trail = []
+    trail = deque(maxlen=TRAIL_MAX)
     ppm = PIXELS_PER_METER
     real_time_speed = REAL_TIME_SPEED
 
@@ -106,7 +109,7 @@ def main():
         r = R0.copy()
         v = V0.copy()
         t_sim = 0.0
-        trail = []
+        trail = deque(maxlen=TRAIL_MAX)
         paused = False
         ppm = PIXELS_PER_METER
         real_time_speed = REAL_TIME_SPEED
@@ -157,8 +160,6 @@ def main():
 
             if show_trail:
                 trail.append((r[0], r[1]))
-                if len(trail) > TRAIL_MAX:
-                    trail = trail[-TRAIL_MAX:]
 
         # --- Render ---
         screen.fill(BG_COLOR)
@@ -170,7 +171,15 @@ def main():
 
         # Spår
         if show_trail and len(trail) >= 2:
-            pts = [world_to_screen(x, y, ppm) for (x, y) in trail]
+            if len(trail) > TRAIL_DRAW_MAX:
+                step = math.ceil(len(trail) / TRAIL_DRAW_MAX)
+                sampled_trail = list(islice(trail, 0, len(trail), step))
+                if sampled_trail[-1] != trail[-1]:
+                    sampled_trail.append(trail[-1])
+            else:
+                sampled_trail = list(trail)
+
+            pts = [world_to_screen(x, y, ppm) for (x, y) in sampled_trail]
             pygame.draw.lines(screen, TRAIL_COLOR, False, pts, 2)
 
         # Satellit
@@ -209,3 +218,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pygame.quit()
         sys.exit()
+
