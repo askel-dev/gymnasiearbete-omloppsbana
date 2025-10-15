@@ -1,4 +1,5 @@
 # src/orbit_pygame.py
+import json
 import math
 import time
 import pygame
@@ -6,6 +7,8 @@ import sys
 import numpy as np
 from collections import deque
 from itertools import islice
+
+from logging_utils import RunLogger
 
 # =======================
 #   FYSIK & KONSTANTER
@@ -26,6 +29,8 @@ REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
 TRAIL_MAX = 99999              # punkter i spår
 TRAIL_DRAW_MAX = 2000          # max punkter att rita per frame
+LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
+ESCAPE_RADIUS_FACTOR = 20.0
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
@@ -142,8 +147,25 @@ def main():
     accumulator = 0.0
     last_time = time.perf_counter()
 
+    # loggningsstate
+    logger: RunLogger | None = None
+    log_step_counter = 0
+    prev_r: float | None = None
+    prev_dr: float | None = None
+    impact_logged = False
+    escape_logged = False
+
+    def close_logger():
+        nonlocal logger
+        if logger is not None:
+            logger.close()
+            logger = None
+
     def reset():
-        nonlocal r, v, t_sim, trail, paused, ppm, real_time_speed, accumulator, last_time
+        nonlocal r, v, t_sim, trail, paused, ppm, real_time_speed
+        nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
+        nonlocal impact_logged, escape_logged
+        close_logger()
         r = R0.copy()
         v = V0.copy()
         t_sim = 0.0
@@ -153,15 +175,73 @@ def main():
         real_time_speed = REAL_TIME_SPEED
         accumulator = 0.0
         last_time = time.perf_counter()
+        log_step_counter = 0
+        prev_r = None
+        prev_dr = None
+        impact_logged = False
+        escape_logged = False
 
     state = "menu"
+    escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
+
+    def log_state(dt_eff: float) -> None:
+        if logger is None:
+            return
+        rmag = float(np.linalg.norm(r))
+        vmag = float(np.linalg.norm(v))
+        eps = float(energy_specific(r, v))
+        h_vec = np.cross(np.array([r[0], r[1], 0.0]), np.array([v[0], v[1], 0.0]))
+        h_mag = float(np.linalg.norm(h_vec))
+        e_val = float(eccentricity(r, v))
+        logger.log_ts(
+            [
+                float(t_sim),
+                float(r[0]),
+                float(r[1]),
+                float(v[0]),
+                float(v[1]),
+                rmag,
+                vmag,
+                eps,
+                h_mag,
+                e_val,
+                float(dt_eff),
+            ]
+        )
+
+    def init_run_logging() -> None:
+        nonlocal logger, log_step_counter, prev_r, prev_dr, impact_logged, escape_logged
+        close_logger()
+        logger = RunLogger()
+        meta = {
+            "R0": R0.tolist(),
+            "V0": V0.tolist(),
+            "v0": float(np.linalg.norm(V0)),
+            "G": G,
+            "M": M,
+            "mu": MU,
+            "integrator": "RK4",
+            "dt_phys": DT_PHYS,
+            "start_speed": REAL_TIME_SPEED,
+            "log_strategy": "every_20_steps",
+            "code_version": "v1.0",
+        }
+        logger.write_meta(meta)
+        log_step_counter = 0
+        prev_r = float(np.linalg.norm(r))
+        prev_dr = None
+        impact_logged = False
+        escape_logged = False
+        log_state(0.0)
 
     def start_simulation():
         nonlocal state
         reset()
         state = "running"
+        init_run_logging()
 
     def quit_app():
+        close_logger()
         pygame.quit()
         sys.exit()
 
@@ -213,9 +293,14 @@ def main():
         nonlocal camera_mode
         camera_mode = "satellite" if camera_mode == "earth" else "earth"
 
+    def reset_and_continue():
+        reset()
+        if state == "running":
+            init_run_logging()
+
     sim_buttons = [
         Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if paused else "Pause"),
-        Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset),
+        Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset_and_continue),
         Button(
             (20, 20 + 2 * (button_height + button_gap), button_width, button_height),
             "Trail",
@@ -245,7 +330,7 @@ def main():
         # --- Input ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                quit_app()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     quit_app()
@@ -253,7 +338,7 @@ def main():
                     if event.key == pygame.K_SPACE:
                         paused = not paused
                     elif event.key == pygame.K_r:
-                        reset()
+                        reset_and_continue()
                     elif event.key == pygame.K_t:
                         show_trail = not show_trail
                     elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
@@ -314,6 +399,74 @@ def main():
                 t_sim += dt_step
                 if show_trail:
                     trail.append((r[0], r[1]))
+
+                if logger is not None:
+                    log_step_counter += 1
+                    rmag = float(np.linalg.norm(r))
+                    vmag = float(np.linalg.norm(v))
+                    eps = float(energy_specific(r, v))
+                    e_val = float(eccentricity(r, v))
+                    event_logged = False
+
+                    prev_radius = prev_r
+                    dr = None
+                    if prev_radius is not None:
+                        dr = rmag - prev_radius
+                        if prev_dr is not None:
+                            if prev_dr < 0.0 and dr >= 0.0:
+                                logger.log_event(
+                                    [
+                                        float(t_sim),
+                                        "pericenter",
+                                        rmag,
+                                        vmag,
+                                        json.dumps({"ecc": e_val, "energy": eps}),
+                                    ]
+                                )
+                                event_logged = True
+                            elif prev_dr > 0.0 and dr <= 0.0:
+                                logger.log_event(
+                                    [
+                                        float(t_sim),
+                                        "apocenter",
+                                        rmag,
+                                        vmag,
+                                        json.dumps({"ecc": e_val, "energy": eps}),
+                                    ]
+                                )
+                                event_logged = True
+                    prev_dr = dr
+                    prev_r = rmag
+
+                    if not impact_logged and rmag <= EARTH_RADIUS:
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                "impact",
+                                rmag,
+                                vmag,
+                                json.dumps({"penetration": EARTH_RADIUS - rmag, "energy": eps}),
+                            ]
+                        )
+                        impact_logged = True
+                        event_logged = True
+
+                    if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                "escape",
+                                rmag,
+                                vmag,
+                                json.dumps({"energy": eps, "ecc": e_val}),
+                            ]
+                        )
+                        escape_logged = True
+                        event_logged = True
+
+                    if log_step_counter >= LOG_EVERY_STEPS or event_logged:
+                        log_state(dt_step)
+                        log_step_counter = 0
 
             accumulator = 0.0
 
