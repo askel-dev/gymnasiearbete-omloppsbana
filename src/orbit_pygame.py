@@ -75,9 +75,10 @@ def eccentricity(r, v):
     e_vec = np.cross(v3, h)/MU - r3/np.linalg.norm(r3)
     return np.linalg.norm(e_vec[:2])
 
-def world_to_screen(x, y, ppm):
-    sx = WIDTH//2 + int(x * ppm)
-    sy = HEIGHT//2 - int(y * ppm)
+def world_to_screen(x, y, ppm, camera_center=(0.0, 0.0)):
+    cx, cy = camera_center
+    sx = WIDTH // 2 + int((x - cx) * ppm)
+    sy = HEIGHT // 2 - int((y - cy) * ppm)
     return sx, sy
 
 def clamp(val, lo, hi):
@@ -133,6 +134,7 @@ def main():
     trail = deque(maxlen=TRAIL_MAX)
     ppm = PIXELS_PER_METER
     real_time_speed = REAL_TIME_SPEED
+    camera_mode = "earth"
 
     vel_vector_scale = 500.0  # endast visuellt
 
@@ -207,6 +209,10 @@ def main():
         nonlocal real_time_speed
         real_time_speed = min(real_time_speed * 1.5, 10_000.0)
 
+    def toggle_camera():
+        nonlocal camera_mode
+        camera_mode = "satellite" if camera_mode == "earth" else "earth"
+
     sim_buttons = [
         Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if paused else "Pause"),
         Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset),
@@ -225,6 +231,12 @@ def main():
             (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
             "Faster",
             speed_up,
+        ),
+        Button(
+            (20, 20 + 5 * (button_height + button_gap), button_width, button_height),
+            "Camera",
+            toggle_camera,
+            lambda: "Camera: Earth" if camera_mode == "earth" else "Camera: Sat",
         ),
     ]
 
@@ -308,8 +320,11 @@ def main():
         # --- Render ---
         screen.fill(BG_COLOR)
 
+        # Kameracentrering
+        camera_center = (0.0, 0.0) if camera_mode == "earth" else (r[0], r[1])
+
         # Jorden
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm)
+        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center)
         earth_px = max(2, int(EARTH_RADIUS * ppm))
         pygame.draw.circle(screen, EARTH_COLOR, earth_screen_pos, earth_px)
 
@@ -323,16 +338,16 @@ def main():
             else:
                 sampled_trail = list(trail)
 
-            pts = [world_to_screen(x, y, ppm) for (x, y) in sampled_trail]
+            pts = [world_to_screen(x, y, ppm, camera_center) for (x, y) in sampled_trail]
             pygame.draw.lines(screen, TRAIL_COLOR, False, pts, 2)
 
         # Satellit
-        sat_pos = world_to_screen(r[0], r[1], ppm)
+        sat_pos = world_to_screen(r[0], r[1], ppm, camera_center)
         pygame.draw.circle(screen, SAT_COLOR, sat_pos, 5)
 
         # Hastighetsvektor (visuell)
         vx, vy = v
-        v_end = world_to_screen(r[0] + vx*vel_vector_scale, r[1] + vy*vel_vector_scale, ppm)
+        v_end = world_to_screen(r[0] + vx*vel_vector_scale, r[1] + vy*vel_vector_scale, ppm, camera_center)
         pygame.draw.line(screen, VEL_COLOR, sat_pos, v_end, 2)
 
         # HUD
@@ -347,6 +362,7 @@ def main():
             "SPACE: paus | R: reset | T: trail | +/-: zoom",
             "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
             "Knapparna till vänster speglar kontrollerna",
+            "Kamera-knappen växlar fokus mellan jord och satellit",
         ]
         y = 10
         for line in hud_lines:
