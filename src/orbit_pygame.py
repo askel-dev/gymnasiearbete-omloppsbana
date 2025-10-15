@@ -16,13 +16,13 @@ MU = G * M
 EARTH_RADIUS = 6_371_000      # m
 # Startvillkor
 R0 = np.array([7_000_000.0, 0.0])  # m
-V0 = np.array([0.0, 7_800.0])      # m/s
+V0 = np.array([0.0, 7_600.0])      # m/s
 
 # =======================
 #   SIMULATOR-SETTINGS
 # =======================
 DT_PHYS = 0.25                 # fysikens tidssteg (sekunder)
-REAL_TIME_SPEED = 60.0        # sim-sek per real-sek (startvärde)
+REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
 TRAIL_MAX = 99999              # punkter i spår
 TRAIL_DRAW_MAX = 2000          # max punkter att rita per frame
@@ -38,7 +38,7 @@ TRAIL_COLOR = (120, 210, 180)
 HUD_COLOR = (220, 230, 240)
 VEL_COLOR = (255, 120, 120)
 
-PIXELS_PER_METER = 0.5 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
+PIXELS_PER_METER = 0.25 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
 MIN_PPM = 1e-7
 MAX_PPM = 1e-2
 
