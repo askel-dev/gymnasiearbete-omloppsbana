@@ -151,15 +151,22 @@ def main():
         sim_dt_target = frame_dt_real * real_time_speed
         accumulator += sim_dt_target
 
-        substeps = 0
-        while accumulator >= DT_PHYS and not paused and substeps < MAX_SUBSTEPS:
-            r, v = rk4_step(r, v, DT_PHYS)
-            t_sim += DT_PHYS
-            accumulator -= DT_PHYS
-            substeps += 1
+        if paused:
+            accumulator = 0.0
 
-            if show_trail:
-                trail.append((r[0], r[1]))
+        time_to_simulate = accumulator if not paused else 0.0
+        if time_to_simulate > 0.0:
+            steps_needed = max(1, math.ceil(time_to_simulate / DT_PHYS))
+            steps_to_run = min(steps_needed, MAX_SUBSTEPS)
+            dt_step = time_to_simulate / steps_to_run
+
+            for _ in range(steps_to_run):
+                r, v = rk4_step(r, v, dt_step)
+                t_sim += dt_step
+                if show_trail:
+                    trail.append((r[0], r[1]))
+
+            accumulator = 0.0
 
         # --- Render ---
         screen.fill(BG_COLOR)
