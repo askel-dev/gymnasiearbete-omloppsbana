@@ -287,6 +287,93 @@ def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: floa
         surface.blit(star_surface, (sx - radius, sy - radius))
 
 
+@dataclass
+class ParallaxLayer:
+    surface: pygame.Surface
+    velocity: tuple[float, float]
+    mouse_factor: float
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+
+    def advance(self, dt: float) -> None:
+        if dt <= 0.0:
+            return
+        width = max(1, self.surface.get_width())
+        height = max(1, self.surface.get_height())
+        self.offset_x = (self.offset_x + self.velocity[0] * dt) % width
+        self.offset_y = (self.offset_y + self.velocity[1] * dt) % height
+
+    def draw(self, target: pygame.Surface, mouse_offset: tuple[float, float]) -> None:
+        width = self.surface.get_width()
+        height = self.surface.get_height()
+        if width == 0 or height == 0:
+            return
+        mouse_shift_x = mouse_offset[0] * self.mouse_factor * width
+        mouse_shift_y = mouse_offset[1] * self.mouse_factor * height
+        ox = (self.offset_x + mouse_shift_x) % width
+        oy = (self.offset_y + mouse_shift_y) % height
+        base_x = -ox
+        base_y = -oy
+        for dx in (0, width):
+            for dy in (0, height):
+                target.blit(self.surface, (int(base_x + dx), int(base_y + dy)))
+
+
+def generate_menu_parallax_layers(width: int, height: int) -> list[ParallaxLayer]:
+    rng = random.Random(5123)
+    star_count = max(120, int(max(width, height) * 0.25))
+    layer_specs = [
+        {
+            "count": max(1, int(star_count * 0.55)),
+            "radius_choices": [1, 1, 1, 2],
+            "alpha_range": (45, 110),
+            "velocity": (-8.0, 0.0),
+            "mouse_factor": 0.010,
+        },
+        {
+            "count": max(1, int(star_count * 0.35)),
+            "radius_choices": [1, 2, 2, 3],
+            "alpha_range": (80, 160),
+            "velocity": (-18.0, 4.0),
+            "mouse_factor": 0.018,
+        },
+        {
+            "count": max(1, int(star_count * 0.22)),
+            "radius_choices": [2, 3, 3, 4],
+            "alpha_range": (110, 210),
+            "velocity": (-32.0, 12.0),
+            "mouse_factor": 0.028,
+        },
+    ]
+    layers: list[ParallaxLayer] = []
+    for spec in layer_specs:
+        layer_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        for _ in range(spec["count"]):
+            radius = rng.choice(spec["radius_choices"])
+            alpha = rng.randint(*spec["alpha_range"])
+            color = (
+                rng.randint(120, 190),
+                rng.randint(160, 220),
+                255,
+                alpha,
+            )
+            x = rng.randint(0, width)
+            y = rng.randint(0, height)
+            pygame.draw.circle(layer_surface, color, (x, y), radius)
+        layer = ParallaxLayer(
+            surface=layer_surface,
+            velocity=(
+                spec["velocity"][0] * (0.6 + rng.random() * 0.8),
+                spec["velocity"][1] * (0.6 + rng.random() * 0.8),
+            ),
+            mouse_factor=spec["mouse_factor"],
+        )
+        layer.offset_x = rng.uniform(0, max(1, width))
+        layer.offset_y = rng.uniform(0, max(1, height))
+        layers.append(layer)
+    return layers
+
+
 def load_font(preferred_names: list[str], size: int, *, bold: bool = False) -> pygame.font.Font:
     for name in preferred_names:
         try:
@@ -602,23 +689,9 @@ def main():
 
     gradient_bg = create_vertical_gradient(WIDTH, HEIGHT, BG_COLOR_TOP, BG_COLOR_BOTTOM)
     menu_background = gradient_bg.copy()
-
-    star_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    star_rng = random.Random(5123)
-    star_count = max(120, int(max(WIDTH, HEIGHT) * 0.25))
-    for _ in range(star_count):
-        radius = star_rng.choice([1, 1, 1, 2, 2, 3])
-        alpha = star_rng.randint(60, 140)
-        color = (
-            star_rng.randint(120, 180),
-            star_rng.randint(160, 210),
-            255,
-            alpha,
-        )
-        x = star_rng.randint(0, WIDTH)
-        y = star_rng.randint(0, HEIGHT)
-        pygame.draw.circle(star_overlay, color, (x, y), radius)
-    menu_background.blit(star_overlay, (0, 0))
+    menu_parallax_layers = generate_menu_parallax_layers(WIDTH, HEIGHT)
+    menu_mouse_offset = [0.0, 0.0]
+    menu_last_time = time.perf_counter()
 
     menu_glow_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     glow_radius = int(min(WIDTH, HEIGHT) * 0.45)
@@ -632,9 +705,9 @@ def main():
 
     title_font = load_font(["montserrat", "futura", "avenir", "arial"], title_font_size, bold=True)
     subtitle_font = load_font(["montserrat", "futura", "avenir", "arial"], subtitle_font_size)
-    menu_button_size = max(80, int(min_dimension * 0.08))
+    menu_button_size = max(60, int(min_dimension * 0.08))
     menu_planet_diameter = max(700, min(320, int(min_dimension * 0.32)))
-    menu_button_height = max(120, int(menu_button_size * 0.26))
+    menu_button_height = max(100, int(menu_button_size * 0.26))
     menu_button_font_size = min(menu_button_height - 12, max(26, int(menu_button_height * 0.52)))
     menu_button_font = load_font(
         ["montserrat", "futura", "avenir", "arial"],
@@ -816,7 +889,7 @@ def main():
                 menu_button_width,
                 menu_button_height,
             ),
-            "QUIT",
+            "AVSLUTA",
             quit_app,
             style=MENU_BUTTON_STYLE,
         ),
@@ -948,7 +1021,24 @@ def main():
                     btn.handle_event(event)
 
         if state == "menu":
+            now_menu = time.perf_counter()
+            menu_frame_dt = min(now_menu - menu_last_time, 0.05)
+            menu_last_time = now_menu
+            menu_mouse_pos = pygame.mouse.get_pos()
+            for layer in menu_parallax_layers:
+                layer.advance(menu_frame_dt)
+
+            center_x = WIDTH * 0.5
+            center_y = HEIGHT * 0.5
+            target_offset_x = (menu_mouse_pos[0] - center_x) / max(1.0, WIDTH)
+            target_offset_y = (menu_mouse_pos[1] - center_y) / max(1.0, HEIGHT)
+            smoothing = 1.0 - math.exp(-menu_frame_dt * 6.0) if menu_frame_dt > 0.0 else 1.0
+            menu_mouse_offset[0] += (target_offset_x - menu_mouse_offset[0]) * smoothing
+            menu_mouse_offset[1] += (target_offset_y - menu_mouse_offset[1]) * smoothing
+
             screen.blit(menu_background, (0, 0))
+            for layer in menu_parallax_layers:
+                layer.draw(screen, (menu_mouse_offset[0], menu_mouse_offset[1]))
 
             title_surf = title_font.render(menu_title_text, True, MENU_TITLE_COLOR)
             title_rect = title_surf.get_rect(center=(WIDTH // 2, title_y))
@@ -960,7 +1050,6 @@ def main():
 
             draw_menu_planet(screen, planet_center, menu_planet_diameter, image=menu_planet_image)
 
-            menu_mouse_pos = pygame.mouse.get_pos()
             for btn in menu_buttons:
                 btn.draw(screen, menu_button_font, menu_mouse_pos)
 
