@@ -90,6 +90,20 @@ def draw_satellite(surface: pygame.Surface, position: tuple[int, int]) -> None:
     surface.blit(sat_surface, rect)
 
 
+def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
+    pygame.draw.line(surface, VEL_COLOR, start, end, 2)
+    angle = math.atan2(start[1] - end[1], end[0] - start[0])
+    left = (
+        int(end[0] - head_length * math.cos(angle - head_angle)),
+        int(end[1] + head_length * math.sin(angle - head_angle)),
+    )
+    right = (
+        int(end[0] - head_length * math.cos(angle + head_angle)),
+        int(end[1] + head_length * math.sin(angle + head_angle)),
+    )
+    pygame.draw.polygon(surface, VEL_COLOR, [end, left, right])
+
+
 def generate_starfield(num_stars: int) -> list[dict[str, float | tuple[int, int]]]:
     stars: list[dict[str, float | tuple[int, int]]] = []
     for _ in range(num_stars):
@@ -156,6 +170,7 @@ TRAIL_COLOR_ALPHA = (140, 240, 200, 220)
 HUD_TEXT_COLOR = (245, 245, 245)
 HUD_SHADOW_COLOR = (0, 0, 0, 160)
 PREDICTION_COLOR = (120, 180, 255)
+VEL_COLOR = (255, 120, 120)
 BUTTON_COLOR = (35, 55, 90)
 BUTTON_HOVER_COLOR = (70, 110, 160)
 BUTTON_TEXT_COLOR = (240, 245, 250)
