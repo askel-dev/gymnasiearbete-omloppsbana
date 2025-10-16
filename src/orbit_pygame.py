@@ -557,6 +557,16 @@ LABEL_MARKER_HOVER_RADIUS_PIXELS = 6
 LABEL_MARKER_PIN_WIDTH = 10
 LABEL_MARKER_PIN_HEIGHT = 16
 LABEL_MARKER_PIN_OFFSET = 6
+LABEL_MARKER_PINNED_PIN_COLOR = (248, 252, 255)
+LABEL_MARKER_PINNED_GLOW_COLOR = (255, 255, 255)
+LABEL_MARKER_PINNED_GLOW_ALPHA = 90
+LABEL_MARKER_PINNED_OUTLINE_ALPHA = 210
+LABEL_MARKER_PINNED_RADIUS_PIXELS = 8
+LABEL_MARKER_PINNED_GLOW_RADIUS = 14
+LABEL_PINNED_BACKGROUND_COLOR = (16, 28, 46, int(255 * 0.42))
+LABEL_PINNED_BADGE_COLOR = (255, 255, 255, 220)
+LABEL_PINNED_BADGE_TEXT_COLOR = (18, 36, 64)
+MARKER_PIN_FEEDBACK_DURATION = 1.6
 FPS_TEXT_ALPHA = int(255 * 0.6)
 STARFIELD_PARALLAX = 0.12
 
@@ -803,6 +813,78 @@ def main():
     font = pygame.font.SysFont("consolas", 18)
     scenario_font = pygame.font.SysFont("consolas", 16)
 
+    def render_marker_label(
+        surface: pygame.Surface,
+        marker_type: str,
+        marker_pos: tuple[int, int],
+        radius_world: float,
+        *,
+        pinned: bool = False,
+    ) -> None:
+        label = marker_display_name(marker_type)
+        altitude_km = (radius_world - EARTH_RADIUS) / 1_000.0
+        text = f"{label}: {altitude_km:,.1f} km"
+        text_surf = font.render(text, True, LABEL_TEXT_COLOR)
+        if HUD_TEXT_ALPHA < 255:
+            text_surf.set_alpha(HUD_TEXT_ALPHA)
+
+        padding = 6
+        bg_width = text_surf.get_width() + padding * 2
+        bg_height = text_surf.get_height() + padding * 2
+
+        background_color = LABEL_PINNED_BACKGROUND_COLOR if pinned else LABEL_BACKGROUND_COLOR
+        connector_alpha = LABEL_MARKER_PINNED_OUTLINE_ALPHA if pinned else int(LABEL_MARKER_ALPHA * 0.6)
+        connector_color = LABEL_MARKER_PINNED_GLOW_COLOR if pinned else LABEL_MARKER_COLOR
+        line_length = 24 if pinned else 18
+        direction = -1 if marker_type == "pericenter" else 1
+        anchor_y = marker_pos[1] + direction * line_length
+
+        bg_rect = pygame.Rect(0, 0, bg_width, bg_height)
+        bg_rect.center = (
+            marker_pos[0],
+            int(anchor_y + direction * (bg_rect.height / 2 + 6)),
+        )
+
+        pygame.draw.line(
+            surface,
+            (*connector_color, connector_alpha),
+            marker_pos,
+            (marker_pos[0], anchor_y),
+            2,
+        )
+
+        pygame.draw.rect(
+            surface,
+            background_color,
+            bg_rect,
+            border_radius=12 if pinned else 10,
+        )
+
+        surface.blit(text_surf, (bg_rect.left + padding, bg_rect.top + padding))
+
+        if pinned:
+            badge_text = "PINNED"
+            badge_padding_x = 6
+            badge_padding_y = 2
+            badge_surf = font_fps.render(badge_text, True, LABEL_PINNED_BADGE_TEXT_COLOR)
+            badge_rect = pygame.Rect(
+                0,
+                0,
+                badge_surf.get_width() + badge_padding_x * 2,
+                badge_surf.get_height() + badge_padding_y * 2,
+            )
+            badge_rect.midbottom = (bg_rect.centerx, bg_rect.top - 4)
+            pygame.draw.rect(
+                surface,
+                LABEL_PINNED_BADGE_COLOR,
+                badge_rect,
+                border_radius=badge_rect.height // 2,
+            )
+            surface.blit(
+                badge_surf,
+                (badge_rect.left + badge_padding_x, badge_rect.top + badge_padding_y),
+            )
+
     min_dimension = min(WIDTH, HEIGHT)
     title_font_size = max(48, int(min_dimension * 0.075))
     subtitle_font_size = max(26, int(min_dimension * 0.032))
@@ -928,6 +1010,9 @@ def main():
 
     orbit_markers: deque[tuple[str, float, float, float]] = deque(maxlen=20)
     trail_history: deque[tuple[float, float, float]] = deque(maxlen=1200)
+    pinned_markers: dict[str, tuple[float, float, float]] = {}
+    pin_feedback_text: str | None = None
+    pin_feedback_time = 0.0
 
     # tidsackumulator för fast fysik
     accumulator = 0.0
@@ -954,6 +1039,7 @@ def main():
         nonlocal camera_center, orbit_markers, camera_target, trail_history
         nonlocal camera_mode, is_dragging_camera
         nonlocal orbit_prediction_period, orbit_prediction_points
+        nonlocal pinned_markers, pin_feedback_text, pin_feedback_time
         close_logger()
         r = R0.copy()
         v = scenario_velocity_vector()
@@ -970,6 +1056,9 @@ def main():
         impact_logged = False
         escape_logged = False
         orbit_markers.clear()
+        pinned_markers.clear()
+        pin_feedback_text = None
+        pin_feedback_time = 0.0
         trail_history.clear()
         camera_center[:] = (0.0, 0.0)
         camera_target[:] = (0.0, 0.0)
@@ -979,6 +1068,46 @@ def main():
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
+
+    def marker_display_name(marker_type: str) -> str:
+        return "Periapsis" if marker_type == "pericenter" else "Apoapsis"
+
+    def get_latest_marker(marker_type: str) -> tuple[float, float, float] | None:
+        for m_type, mx, my, mr in reversed(orbit_markers):
+            if m_type == marker_type:
+                return (mx, my, mr)
+        return None
+
+    def refresh_pinned_marker(marker_type: str) -> None:
+        latest = get_latest_marker(marker_type)
+        if latest is not None:
+            pinned_markers[marker_type] = latest
+        elif marker_type in pinned_markers:
+            del pinned_markers[marker_type]
+
+    def marker_hit_test(mouse_pos: tuple[int, int]) -> str | None:
+        if not orbit_markers:
+            return None
+        camera_tuple = (float(camera_center[0]), float(camera_center[1]))
+        closest_type: str | None = None
+        closest_distance = float("inf")
+        for marker_type, mx, my, _ in reversed(orbit_markers):
+            marker_pos = world_to_screen(mx, my, ppm, camera_tuple)
+            distance = math.hypot(marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1])
+            if distance <= LABEL_MARKER_HOVER_RADIUS and distance < closest_distance:
+                closest_distance = distance
+                closest_type = marker_type
+        return closest_type
+
+    def toggle_marker_pin(marker_type: str) -> bool:
+        if marker_type in pinned_markers:
+            del pinned_markers[marker_type]
+            return False
+        latest = get_latest_marker(marker_type)
+        if latest is None:
+            return False
+        pinned_markers[marker_type] = latest
+        return True
 
     def set_scenario(new_key: str) -> None:
         nonlocal current_scenario_key, scenario_flash_text, scenario_flash_time
@@ -1207,11 +1336,21 @@ def main():
                     elif event.key == pygame.K_c:
                         toggle_camera()
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1 and state == "running" and not is_over_button(event.pos):
-                    is_dragging_camera = True
-                    drag_last_pos = event.pos
-                    camera_mode = "manual"
-                    camera_target[:] = camera_center
+                if event.button == 1 and state == "running":
+                    if not is_over_button(event.pos):
+                        clicked_marker = marker_hit_test(event.pos)
+                        if clicked_marker is not None:
+                            is_now_pinned = toggle_marker_pin(clicked_marker)
+                            if is_now_pinned:
+                                refresh_pinned_marker(clicked_marker)
+                            status = "pinned" if is_now_pinned else "unpinned"
+                            pin_feedback_text = f"{marker_display_name(clicked_marker)} {status}"
+                            pin_feedback_time = time.perf_counter()
+                        else:
+                            is_dragging_camera = True
+                            drag_last_pos = event.pos
+                            camera_mode = "manual"
+                            camera_target[:] = camera_center
                 elif event.button == 4 and state == "running":
                     ppm_target = clamp(ppm_target * 1.1, MIN_PPM, MAX_PPM)
                 elif event.button == 5 and state == "running":
@@ -1352,6 +1491,7 @@ def main():
 
                 if event_type is not None:
                     orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
+                    refresh_pinned_marker(event_type)
 
                 trail_history.append((float(r[0]), float(r[1]), time.perf_counter()))
 
@@ -1486,25 +1626,50 @@ def main():
 
         hovered_marker: tuple[str, tuple[int, int], float] | None = None
         hovered_distance = float("inf")
+        pinned_label_entries: list[tuple[str, tuple[int, int], float]] = []
         if orbit_markers:
-            for marker_type, mx, my, mr in orbit_markers:
+            markers_snapshot = list(orbit_markers)
+            latest_index: dict[str, int] = {}
+            for idx, (marker_type, _, _, _) in enumerate(markers_snapshot):
+                latest_index[marker_type] = idx
+            for idx, (marker_type, mx, my, mr) in enumerate(markers_snapshot):
                 marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
                 dist_to_mouse = math.hypot(
                     marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1]
                 )
                 hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
+                is_latest = latest_index.get(marker_type) == idx
+                is_pinned = marker_type in pinned_markers and is_latest
                 alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
                 radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
+                pin_color = LABEL_MARKER_PINNED_PIN_COLOR if is_pinned else LABEL_MARKER_COLOR
+                if is_pinned:
+                    alpha = max(alpha, 240)
+                    radius = max(radius, LABEL_MARKER_PINNED_RADIUS_PIXELS)
+                    pygame.draw.circle(
+                        label_layer,
+                        (*LABEL_MARKER_PINNED_GLOW_COLOR, LABEL_MARKER_PINNED_GLOW_ALPHA),
+                        marker_pos,
+                        LABEL_MARKER_PINNED_GLOW_RADIUS,
+                    )
+                    pygame.draw.circle(
+                        label_layer,
+                        (*LABEL_MARKER_PINNED_GLOW_COLOR, LABEL_MARKER_PINNED_OUTLINE_ALPHA),
+                        marker_pos,
+                        radius + 4,
+                        2,
+                    )
+                    pinned_label_entries.append((marker_type, marker_pos, mr))
                 draw_marker_pin(
                     label_layer,
                     marker_pos,
-                    color=LABEL_MARKER_COLOR,
+                    color=pin_color,
                     alpha=alpha,
                     orientation=marker_type,
                 )
                 pygame.draw.circle(
                     label_layer,
-                    (*LABEL_MARKER_COLOR, alpha),
+                    (*pin_color, alpha),
                     marker_pos,
                     radius,
                 )
@@ -1514,51 +1679,56 @@ def main():
                         hovered_marker = (marker_type, marker_pos, mr)
                     pygame.draw.circle(
                         label_layer,
-                        (*LABEL_MARKER_COLOR, int(alpha * 0.4)),
+                        (*pin_color, int(alpha * 0.4)),
                         marker_pos,
                         radius + 4,
                         1,
                     )
                 labels_drawn = True
 
+        visible_labels: list[tuple[str, tuple[int, int], float, bool]] = []
+        for entry in pinned_label_entries:
+            visible_labels.append((*entry, True))
         if hovered_marker is not None:
-            marker_type, marker_pos, mr = hovered_marker
-            label = "Periapsis" if marker_type == "pericenter" else "Apoapsis"
-            altitude_km = (mr - EARTH_RADIUS) / 1_000.0
-            text = f"{label}: {altitude_km:,.1f} km"
-            text_surf = font.render(text, True, LABEL_TEXT_COLOR)
-            if HUD_TEXT_ALPHA < 255:
-                text_surf.set_alpha(HUD_TEXT_ALPHA)
-            padding = 6
-            bg_rect = pygame.Rect(
-                0,
-                0,
-                text_surf.get_width() + padding * 2,
-                text_surf.get_height() + padding * 2,
-            )
-            direction = -1 if marker_type == "pericenter" else 1
-            line_length = 18
-            anchor_y = marker_pos[1] + direction * line_length
-            bg_rect.center = (
-                marker_pos[0],
-                int(anchor_y + direction * (bg_rect.height / 2 + 6)),
-            )
-            pygame.draw.line(
+            if not any(entry[0] == hovered_marker[0] for entry in pinned_label_entries):
+                visible_labels.append((*hovered_marker, False))
+
+        for marker_type, marker_pos, mr, is_pinned_label in visible_labels:
+            render_marker_label(
                 label_layer,
-                (*LABEL_MARKER_COLOR, int(LABEL_MARKER_ALPHA * 0.6)),
+                marker_type,
                 marker_pos,
-                (marker_pos[0], anchor_y),
-                2,
+                mr,
+                pinned=is_pinned_label,
             )
-            pygame.draw.rect(
-                label_layer,
-                LABEL_BACKGROUND_COLOR,
-                bg_rect,
-                border_radius=10,
-            )
-            label_layer.blit(text_surf, (bg_rect.left + padding, bg_rect.top + padding))
         if labels_drawn:
             screen.blit(label_layer, (0, 0))
+
+        if pin_feedback_text is not None:
+            elapsed_feedback = now_time - pin_feedback_time
+            if elapsed_feedback < MARKER_PIN_FEEDBACK_DURATION:
+                fade = clamp(1.0 - elapsed_feedback / MARKER_PIN_FEEDBACK_DURATION, 0.0, 1.0)
+                feedback_alpha = int(255 * fade)
+                feedback_text_surf = scenario_font.render(pin_feedback_text, True, LABEL_TEXT_COLOR)
+                if feedback_alpha < 255:
+                    feedback_text_surf = feedback_text_surf.copy()
+                    feedback_text_surf.set_alpha(feedback_alpha)
+                padding_x = 18
+                padding_y = 8
+                bubble_width = feedback_text_surf.get_width() + padding_x * 2
+                bubble_height = feedback_text_surf.get_height() + padding_y * 2
+                bubble = pygame.Surface((bubble_width, bubble_height), pygame.SRCALPHA)
+                pygame.draw.rect(
+                    bubble,
+                    (*LABEL_MARKER_PINNED_GLOW_COLOR, int(feedback_alpha * 0.45)),
+                    bubble.get_rect(),
+                    border_radius=18,
+                )
+                bubble.blit(feedback_text_surf, (padding_x, padding_y))
+                bubble_rect = bubble.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.18)))
+                screen.blit(bubble, bubble_rect)
+            else:
+                pin_feedback_text = None
 
         # HUD
         vmag = float(np.linalg.norm(v))
