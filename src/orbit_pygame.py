@@ -168,6 +168,8 @@ TRAIL_FADE_ALPHA = 12
 # =======================
 #   RIT- & KONTROLL-SETTINGS
 # =======================
+# Dessa värden sätts om efter att displayen initierats, men behöver
+# startvärden för typkontroller och tooling.
 WIDTH, HEIGHT = 1000, 800
 BG_COLOR_TOP = (5, 10, 25)
 BG_COLOR_BOTTOM = (10, 30, 60)
@@ -196,7 +198,19 @@ EARTH_SCALE_CACHE_MAX = 256
 
 STARFIELD: list[dict[str, float | tuple[int, int]]] = []
 
-PIXELS_PER_METER = 0.25 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
+def compute_pixels_per_meter(width: int, height: int) -> float:
+    return 0.25 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
+
+
+def update_display_metrics(width: int, height: int) -> None:
+    global WIDTH, HEIGHT, PIXELS_PER_METER
+
+    WIDTH = width
+    HEIGHT = height
+    PIXELS_PER_METER = compute_pixels_per_meter(width, height)
+
+
+PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
 MIN_PPM = 1e-7
 MAX_PPM = 1e-2
 
@@ -305,16 +319,21 @@ class Button:
 # =======================
 def main():
     pygame.init()
-    font_fps = pygame.font.SysFont("consolas", 18)
     pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
-    resolution = (WIDTH, HEIGHT)
-    flags = FULLSCREEN | DOUBLEBUF
-    bpp = 0
+    font_fps = pygame.font.SysFont("consolas", 18)
+
+    fullscreen_flags = FULLSCREEN | DOUBLEBUF
     try:
-        screen = pygame.display.set_mode(resolution, flags, bpp)
+        screen = pygame.display.set_mode((0, 0), fullscreen_flags)
     except pygame.error:
-        flags = DOUBLEBUF
-        screen = pygame.display.set_mode(resolution, flags, bpp)
+        # Fallback till fönsterläge om fullscreen inte stöds.
+        info = pygame.display.Info()
+        fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
+        screen = pygame.display.set_mode(fallback_resolution, DOUBLEBUF)
+
+    screen_width, screen_height = screen.get_size()
+    update_display_metrics(screen_width, screen_height)
+
     earth_img = pygame.image.load("assets/earth_sprite.png").convert_alpha()
     earth_img_width = earth_img.get_width()
     earth_img_height = earth_img.get_height()
