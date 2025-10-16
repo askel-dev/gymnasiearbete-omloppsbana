@@ -300,6 +300,8 @@ def main():
     camera_mode = "earth"
     camera_center = np.array([0.0, 0.0], dtype=float)
     camera_target = np.array([0.0, 0.0], dtype=float)
+    is_dragging_camera = False
+    drag_last_pos = (0, 0)
 
     orbit_prediction_period: float | None = None
     orbit_prediction_points: list[tuple[float, float]] = []
@@ -335,6 +337,7 @@ def main():
         nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
         nonlocal impact_logged, escape_logged, ppm_target
         nonlocal trail_prev_screen_pos, trail_last_ppm, trail_last_camera, camera_center, orbit_markers, camera_target
+        nonlocal camera_mode, is_dragging_camera
         nonlocal orbit_prediction_period, orbit_prediction_points
         close_logger()
         r = R0.copy()
@@ -357,6 +360,8 @@ def main():
         orbit_markers.clear()
         camera_center[:] = (0.0, 0.0)
         camera_target[:] = (0.0, 0.0)
+        camera_mode = "earth"
+        is_dragging_camera = False
         trail_last_camera = camera_center.copy()
         orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
 
@@ -470,7 +475,12 @@ def main():
 
     def toggle_camera():
         nonlocal camera_mode
-        camera_mode = "satellite" if camera_mode == "earth" else "earth"
+        if camera_mode == "earth":
+            camera_mode = "satellite"
+        elif camera_mode == "satellite":
+            camera_mode = "manual"
+        else:
+            camera_mode = "earth"
 
     def reset_and_continue():
         reset()
@@ -500,9 +510,20 @@ def main():
             (20, 20 + 5 * (button_height + button_gap), button_width, button_height),
             "Camera",
             toggle_camera,
-            lambda: "Camera: Earth" if camera_mode == "earth" else "Camera: Sat",
+            lambda: (
+                "Camera: Earth"
+                if camera_mode == "earth"
+                else "Camera: Sat" if camera_mode == "satellite" else "Camera: Free"
+            ),
         ),
     ]
+
+    def is_over_button(pos: tuple[int, int]) -> bool:
+        if state == "menu":
+            return any(btn.rect.collidepoint(pos) for btn in menu_buttons)
+        if state == "running":
+            return any(btn.rect.collidepoint(pos) for btn in sim_buttons)
+        return False
 
     # ========= LOOP =========
     while True:
@@ -536,6 +557,32 @@ def main():
                         real_time_speed = max(real_time_speed / 2.0, 0.1)
                     elif event.key == pygame.K_c:
                         toggle_camera()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1 and state == "running" and not is_over_button(event.pos):
+                    is_dragging_camera = True
+                    drag_last_pos = event.pos
+                    camera_mode = "manual"
+                    camera_target[:] = camera_center
+                elif event.button == 4 and state == "running":
+                    ppm_target = clamp(ppm_target * 1.1, MIN_PPM, MAX_PPM)
+                elif event.button == 5 and state == "running":
+                    ppm_target = clamp(ppm_target / 1.1, MIN_PPM, MAX_PPM)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    is_dragging_camera = False
+            elif event.type == pygame.MOUSEMOTION:
+                if is_dragging_camera and state == "running":
+                    dx = event.pos[0] - drag_last_pos[0]
+                    dy = event.pos[1] - drag_last_pos[1]
+                    if dx != 0 or dy != 0:
+                        camera_center[0] -= dx / ppm
+                        camera_center[1] += dy / ppm
+                        camera_target[:] = camera_center
+                        drag_last_pos = event.pos
+            elif event.type == pygame.MOUSEWHEEL:
+                if state == "running" and event.y != 0:
+                    zoom_factor = 1.1 ** event.y
+                    ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
             if state == "menu":
                 for btn in menu_buttons:
                     btn.handle_event(event)
@@ -654,8 +701,10 @@ def main():
         # Kamera-targets
         if camera_mode == "earth":
             camera_target[:] = (0.0, 0.0)
-        else:
+        elif camera_mode == "satellite":
             camera_target[:] = (r[0], r[1])
+        else:
+            camera_target[:] = camera_center
         camera_center += (camera_target - camera_center) * 0.1
 
         # Bakgrund
@@ -727,9 +776,10 @@ def main():
             f"v_x = {vx: .1f} m/s    v_y = {vy: .1f} m/s",
             f"energy = {eps: .3e} J/kg    e = {e:.4f}",
             "SPACE: paus | R: reset | T: trail | +/-: zoom | C: kamera",
+            "Mushjul: zoom | Dra med vänster musknapp för att panorera kameran",
             "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
             "Knapparna till vänster speglar kontrollerna",
-            "Kamera-knappen eller C växlar fokus mellan jord och satellit",
+            "Kamera-knappen eller C växlar fokus mellan jord, satellit och fri kamera",
         ]
         y = 10
         for line in hud_lines:
