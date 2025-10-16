@@ -1,6 +1,7 @@
 # src/orbit_pygame.py
 import json
 import math
+import os
 import random
 import time
 import pygame
@@ -163,7 +164,6 @@ REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
 LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
 ESCAPE_RADIUS_FACTOR = 20.0
-TRAIL_FADE_ALPHA = 12
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
@@ -177,8 +177,6 @@ EARTH_CORE_COLOR = (70, 170, 255)
 EARTH_GLOW_COLOR = (30, 110, 200)
 SAT_COLOR = (255, 255, 230)
 SAT_HALO_COLOR = (255, 200, 120, 120)
-TRAIL_COLOR = (140, 240, 200)
-TRAIL_COLOR_ALPHA = (140, 240, 200, 220)
 HUD_TEXT_COLOR = (245, 245, 245)
 HUD_SHADOW_COLOR = (0, 0, 0, 160)
 PREDICTION_COLOR = (120, 180, 255)
@@ -323,13 +321,24 @@ def main():
     font_fps = pygame.font.SysFont("consolas", 18)
 
     fullscreen_flags = FULLSCREEN | DOUBLEBUF
-    try:
-        screen = pygame.display.set_mode((0, 0), fullscreen_flags)
-    except pygame.error:
-        # Fallback till fönsterläge om fullscreen inte stöds.
-        info = pygame.display.Info()
-        fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
-        screen = pygame.display.set_mode(fallback_resolution, DOUBLEBUF)
+    borderless_flags = NOFRAME | DOUBLEBUF
+    info = pygame.display.Info()
+    fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
+
+    screen: pygame.Surface | None = None
+    if info.current_w and info.current_h:
+        try:
+            os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
+            screen = pygame.display.set_mode((info.current_w, info.current_h), borderless_flags)
+        except pygame.error:
+            screen = None
+
+    if screen is None:
+        try:
+            screen = pygame.display.set_mode((0, 0), fullscreen_flags)
+        except pygame.error:
+            # Fallback till fönsterläge om fullscreen inte stöds.
+            screen = pygame.display.set_mode(fallback_resolution, DOUBLEBUF)
 
     screen_width, screen_height = screen.get_size()
     update_display_metrics(screen_width, screen_height)
@@ -353,7 +362,6 @@ def main():
     v = V0.copy()
     t_sim = 0.0
     paused = False
-    show_trail = True
     ppm = PIXELS_PER_METER
     ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
@@ -366,13 +374,7 @@ def main():
     orbit_prediction_period: float | None = None
     orbit_prediction_points: list[tuple[float, float]] = []
 
-    trail_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    trail_surface.fill((0, 0, 0, 0))
-    trail_prev_screen_pos: tuple[int, int] | None = None
-    trail_last_ppm = ppm
-    trail_last_camera = camera_center.copy()
-
-    orbit_markers: deque[tuple[str, float, float]] = deque(maxlen=20)
+    orbit_markers: deque[tuple[str, float, float, float]] = deque(maxlen=20)
 
     # tidsackumulator för fast fysik
     accumulator = 0.0
@@ -396,7 +398,7 @@ def main():
         nonlocal r, v, t_sim, paused, ppm, real_time_speed
         nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
         nonlocal impact_logged, escape_logged, ppm_target
-        nonlocal trail_prev_screen_pos, trail_last_ppm, trail_last_camera, camera_center, orbit_markers, camera_target
+        nonlocal camera_center, orbit_markers, camera_target
         nonlocal camera_mode, is_dragging_camera
         nonlocal orbit_prediction_period, orbit_prediction_points
         close_logger()
@@ -414,15 +416,11 @@ def main():
         prev_dr = None
         impact_logged = False
         escape_logged = False
-        trail_surface.fill((0, 0, 0, 0))
-        trail_prev_screen_pos = None
-        trail_last_ppm = ppm
         orbit_markers.clear()
         camera_center[:] = (0.0, 0.0)
         camera_target[:] = (0.0, 0.0)
         camera_mode = "earth"
         is_dragging_camera = False
-        trail_last_camera = camera_center.copy()
         orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
 
     state = "menu"
@@ -521,10 +519,6 @@ def main():
         nonlocal paused
         paused = not paused
 
-    def toggle_trail():
-        nonlocal show_trail
-        show_trail = not show_trail
-
     def slow_down():
         nonlocal real_time_speed
         real_time_speed = max(real_time_speed / 1.5, 0.1)
@@ -552,22 +546,16 @@ def main():
         Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset_and_continue),
         Button(
             (20, 20 + 2 * (button_height + button_gap), button_width, button_height),
-            "Trail",
-            toggle_trail,
-            lambda: "Trail: On" if show_trail else "Trail: Off",
-        ),
-        Button(
-            (20, 20 + 3 * (button_height + button_gap), button_width, button_height),
             "Slower",
             slow_down,
         ),
         Button(
-            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
+            (20, 20 + 3 * (button_height + button_gap), button_width, button_height),
             "Faster",
             speed_up,
         ),
         Button(
-            (20, 20 + 5 * (button_height + button_gap), button_width, button_height),
+            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
             "Camera",
             toggle_camera,
             lambda: (
@@ -599,8 +587,6 @@ def main():
                         paused = not paused
                     elif event.key == pygame.K_r:
                         reset_and_continue()
-                    elif event.key == pygame.K_t:
-                        show_trail = not show_trail
                     elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
                         ppm_target = clamp(ppm_target * 1.2, MIN_PPM, MAX_PPM)     # zoom in
                     elif event.key == pygame.K_MINUS:
@@ -710,7 +696,7 @@ def main():
                 prev_r = rmag
 
                 if event_type is not None:
-                    orbit_markers.append((event_type, float(r[0]), float(r[1])))
+                    orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
 
                 if logger is not None:
                     log_step_counter += 1
@@ -842,42 +828,25 @@ def main():
                 ]
                 pygame.draw.lines(screen, PREDICTION_COLOR, False, screen_points, 2)
 
-        # Spår
-        if show_trail:
-            camera_delta = np.linalg.norm(camera_center - trail_last_camera)
-            if abs(ppm - trail_last_ppm) > 1e-5 or camera_delta > 5.0:
-                trail_surface.fill((0, 0, 0, 0))
-                trail_prev_screen_pos = None
-                trail_last_ppm = ppm
-                if trail_last_camera is not None:
-                    np.copyto(trail_last_camera, camera_center)
-                else:
-                    trail_last_camera = camera_center.copy()
-
-            trail_surface.fill((0, 0, 0, TRAIL_FADE_ALPHA), special_flags=pygame.BLEND_RGBA_SUB)
-        else:
-            trail_surface.fill((0, 0, 0, 0))
-            trail_prev_screen_pos = None
-
         # Satellit
         sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
-        if show_trail:
-            if trail_prev_screen_pos is not None:
-                pygame.draw.line(trail_surface, TRAIL_COLOR_ALPHA, trail_prev_screen_pos, sat_pos, 3)
-            trail_prev_screen_pos = sat_pos
-            trail_last_ppm = ppm
-            if trail_last_camera is not None:
-                np.copyto(trail_last_camera, camera_center)
-            else:
-                trail_last_camera = camera_center.copy()
-            screen.blit(trail_surface, (0, 0))
         draw_satellite(screen, sat_pos)
 
-        for marker_type, mx, my in orbit_markers:
+        for marker_type, mx, my, mr in orbit_markers:
             marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
             color = PERICENTER_COLOR if marker_type == "pericenter" else APOCENTER_COLOR
             pygame.draw.circle(screen, color, marker_pos, 6)
             pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
+            label = "Periapsis" if marker_type == "pericenter" else "Apoapsis"
+            altitude_km = (mr - EARTH_RADIUS) / 1_000.0
+            text = f"{label}: {altitude_km:,.1f} km alt"
+            text_width, text_height = font.size(text)
+            text_rect = pygame.Rect(0, 0, text_width, text_height)
+            if marker_type == "pericenter":
+                text_rect.midbottom = (marker_pos[0], marker_pos[1] - 10)
+            else:
+                text_rect.midtop = (marker_pos[0], marker_pos[1] + 10)
+            draw_text_with_shadow(screen, font, text, text_rect.topleft)
 
         # HUD
         rmag = np.linalg.norm(r)
@@ -890,7 +859,7 @@ def main():
             f"|r| = {rmag/1e6:.2f} Mm    |v| = {vmag:,.1f} m/s",
             f"v_x = {vx: .1f} m/s    v_y = {vy: .1f} m/s",
             f"energy = {eps: .3e} J/kg    e = {e:.4f}",
-            "SPACE: paus | R: reset | T: trail | +/-: zoom | C: kamera",
+            "SPACE: paus | R: reset | +/-: zoom | C: kamera",
             "Mushjul: zoom | Dra med vänster musknapp för att panorera kameran",
             "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
             "Knapparna till vänster speglar kontrollerna",
