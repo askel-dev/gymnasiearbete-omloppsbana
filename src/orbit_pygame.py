@@ -4,10 +4,21 @@ import math
 import random
 import time
 import pygame
+from pygame.locals import *  # noqa: F401,F403 - required for constants such as FULLSCREEN
 import sys
 import numpy as np
 from collections import deque
 from functools import lru_cache
+
+try:
+    import psyco
+
+    if hasattr(psyco, "full"):
+        psyco.full()
+    else:  # pragma: no cover - psyco may be a stub without full()
+        psyco = None
+except ImportError:  # pragma: no cover - psyco is optional
+    psyco = None
 
 from logging_utils import RunLogger
 
@@ -306,7 +317,14 @@ def main():
     pygame.init()
     font_fps = pygame.font.SysFont("consolas", 18)
     pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    resolution = (WIDTH, HEIGHT)
+    flags = FULLSCREEN | DOUBLEBUF
+    bpp = 0
+    try:
+        screen = pygame.display.set_mode(resolution, flags, bpp)
+    except pygame.error:
+        flags = DOUBLEBUF
+        screen = pygame.display.set_mode(resolution, flags, bpp)
     earth_img = pygame.image.load("assets/earth_sprite.png").convert_alpha()
     earth_img_width = earth_img.get_width()
     earth_img_height = earth_img.get_height()
