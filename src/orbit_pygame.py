@@ -276,6 +276,7 @@ class Button:
 # =======================
 def main():
     pygame.init()
+    font_fps = pygame.font.SysFont("consolas", 18)
     pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     earth_img = pygame.image.load("assets/earth_sprite.png").convert_alpha()
@@ -604,8 +605,16 @@ def main():
             for btn in menu_buttons:
                 btn.draw(screen, subtitle_font)
 
+            # --- FPS Counter ---
+            fps_value = clock.get_fps()
+            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (200, 200, 200))
+            # placera i nedre högra hörnet
+            text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
+            screen.blit(fps_text, text_rect)
+
+
             pygame.display.flip()
-            clock.tick(60)
+            clock.tick(240)
             continue
 
         # --- Fysik ackumulator ---
@@ -715,6 +724,15 @@ def main():
 
         # Jorden med sprite
         earth_screen_pos = world_to_screen(0.0, 0.0, ppm, tuple(camera_center))
+
+
+        # --- FPS Counter ---
+        fps_value = clock.get_fps()
+        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (200, 200, 200))
+
+        # placera i nedre högra hörnet
+        text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
+        screen.blit(fps_text, text_rect)
 
         # Skala bilden beroende på zoomnivå
         scale_factor = EARTH_RADIUS * ppm * 2 / earth_img.get_width()
