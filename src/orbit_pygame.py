@@ -684,6 +684,10 @@ def main():
     screen_width, screen_height = screen.get_size()
     update_display_metrics(screen_width, screen_height)
 
+    overlay_size = (WIDTH, HEIGHT)
+    trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+    label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 18)
 
@@ -963,6 +967,17 @@ def main():
 
     # ========= LOOP =========
     while True:
+        current_size = screen.get_size()
+        if current_size != overlay_size:
+            overlay_size = current_size
+            update_display_metrics(*current_size)
+            trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+            label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+
+        trail_surface.fill((0, 0, 0, 0))
+        label_layer.fill((0, 0, 0, 0))
+        trail_drawn = False
+        labels_drawn = False
         # --- Input ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1208,7 +1223,6 @@ def main():
         draw_earth(screen, earth_screen_pos, earth_radius_px)
 
         if len(trail_history) >= 2:
-            trail_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             trail_points: list[tuple[tuple[int, int], int]] = []
             for px, py, ts in trail_history:
                 age = now_time - ts
@@ -1224,14 +1238,15 @@ def main():
                         continue
                     color = (*TRAIL_COLOR, alpha)
                     pygame.draw.line(trail_surface, color, p1, p2, 2)
-                screen.blit(trail_surface, (0, 0))
+                trail_drawn = True
+        if trail_drawn:
+            screen.blit(trail_surface, (0, 0))
 
         sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
         sat_radius_px = compute_satellite_radius(rmag)
         draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
 
         if orbit_markers:
-            label_layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             for marker_type, mx, my, mr in orbit_markers:
                 marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
                 pygame.draw.circle(
@@ -1240,6 +1255,7 @@ def main():
                     marker_pos,
                     4,
                 )
+                labels_drawn = True
                 distance_px = math.hypot(marker_pos[0] - sat_pos[0], marker_pos[1] - sat_pos[1])
                 if distance_px > 120:
                     continue
@@ -1277,6 +1293,7 @@ def main():
                     border_radius=10,
                 )
                 label_layer.blit(text_surf, (bg_rect.left + padding, bg_rect.top + padding))
+        if labels_drawn:
             screen.blit(label_layer, (0, 0))
 
         # HUD
