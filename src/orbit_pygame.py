@@ -90,6 +90,15 @@ def draw_satellite(surface: pygame.Surface, position: tuple[int, int]) -> None:
     surface.blit(sat_surface, rect)
 
 
+@lru_cache(maxsize=128)
+def get_earth_glow_surface(radius: int) -> pygame.Surface:
+    radius = max(1, radius)
+    size = radius * 2
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.draw.circle(surface, EARTH_GLOW_OVERLAY_COLOR, (radius, radius), radius)
+    return surface
+
+
 def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
     pygame.draw.line(surface, VEL_COLOR, start, end, 2)
     angle = math.atan2(start[1] - end[1], end[0] - start[0])
@@ -179,6 +188,11 @@ MENU_SUBTITLE_COLOR = (150, 165, 200)
 PERICENTER_COLOR = (255, 180, 120)
 APOCENTER_COLOR = (120, 200, 255)
 
+EARTH_GLOW_OVERLAY_COLOR = (80, 180, 255, 40)
+EARTH_GLOW_CACHE_STEP = 4
+EARTH_SCALE_CACHE_PRECISION = 200
+EARTH_SCALE_CACHE_MAX = 256
+
 STARFIELD: list[dict[str, float | tuple[int, int]]] = []
 
 PIXELS_PER_METER = 0.25 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
@@ -251,18 +265,32 @@ class Button:
         self._text = text
         self._callback = callback
         self._text_getter = text_getter
+        self._cached_text_surface: pygame.Surface | None = None
+        self._cached_text: str | None = None
+        self._cached_font_id: int | None = None
 
     def get_text(self):
         if self._text_getter is not None:
             return self._text_getter()
         return self._text
 
-    def draw(self, surface, font):
-        mouse_pos = pygame.mouse.get_pos()
+    def draw(self, surface, font, mouse_pos=None):
+        if mouse_pos is None:
+            mouse_pos = pygame.mouse.get_pos()
         hovered = self.rect.collidepoint(mouse_pos)
         color = BUTTON_HOVER_COLOR if hovered else BUTTON_COLOR
         pygame.draw.rect(surface, color, self.rect, border_radius=8)
-        text_surf = font.render(self.get_text(), True, BUTTON_TEXT_COLOR)
+        text_value = self.get_text()
+        font_id = id(font)
+        if (
+            self._cached_text_surface is None
+            or text_value != self._cached_text
+            or font_id != self._cached_font_id
+        ):
+            self._cached_text_surface = font.render(text_value, True, BUTTON_TEXT_COLOR)
+            self._cached_text = text_value
+            self._cached_font_id = font_id
+        text_surf = self._cached_text_surface
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
 
@@ -280,7 +308,9 @@ def main():
     pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     earth_img = pygame.image.load("assets/earth_sprite.png").convert_alpha()
-    earth_rect = earth_img.get_rect()
+    earth_img_width = earth_img.get_width()
+    earth_img_height = earth_img.get_height()
+    earth_scale_cache: dict[int, pygame.Surface] = {}
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 20)
     title_font = pygame.font.SysFont("consolas", 40, bold=True)
@@ -602,8 +632,9 @@ def main():
             screen.blit(title_surf, title_rect)
             screen.blit(subtitle_surf, subtitle_rect)
 
+            menu_mouse_pos = pygame.mouse.get_pos()
             for btn in menu_buttons:
-                btn.draw(screen, subtitle_font)
+                btn.draw(screen, subtitle_font, menu_mouse_pos)
 
             # --- FPS Counter ---
             fps_value = clock.get_fps()
@@ -722,8 +753,11 @@ def main():
         screen.blit(gradient_bg, (0, 0))
         draw_starfield(screen, camera_center, ppm)
 
+        camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
+        mouse_pos = pygame.mouse.get_pos()
+
         # Jorden med sprite
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, tuple(camera_center))
+        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
 
         # --- FPS Counter ---
@@ -735,18 +769,28 @@ def main():
         screen.blit(fps_text, text_rect)
 
         # Skala bilden beroende på zoomnivå
-        scale_factor = EARTH_RADIUS * ppm * 2 / earth_img.get_width()
-        scaled_size = (
-            int(earth_img.get_width() * scale_factor),
-            int(earth_img.get_height() * scale_factor),
-        )
-        earth_scaled = pygame.transform.smoothscale(earth_img, scaled_size)
+        scale_factor = EARTH_RADIUS * ppm * 2 / earth_img_width
+        scale_key = max(1, int(round(scale_factor * EARTH_SCALE_CACHE_PRECISION)))
+        earth_scaled = earth_scale_cache.get(scale_key)
+        if earth_scaled is None:
+            quantized_scale = scale_key / EARTH_SCALE_CACHE_PRECISION
+            quantized_size = (
+                max(1, int(earth_img_width * quantized_scale)),
+                max(1, int(earth_img_height * quantized_scale)),
+            )
+            earth_scaled = pygame.transform.smoothscale(earth_img, quantized_size)
+            if len(earth_scale_cache) >= EARTH_SCALE_CACHE_MAX:
+                earth_scale_cache.clear()
+            earth_scale_cache[scale_key] = earth_scaled
 
         glow_radius = int(EARTH_RADIUS * ppm * 1.5)
-        glow_color = (80, 180, 255, 40)
-        glow_surface = pygame.Surface((glow_radius*2, glow_radius*2), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surface, glow_color, (glow_radius, glow_radius), glow_radius)
-        screen.blit(glow_surface, (earth_screen_pos[0]-glow_radius, earth_screen_pos[1]-glow_radius))
+        if glow_radius > 0:
+            glow_radius = max(
+                EARTH_GLOW_CACHE_STEP,
+                (glow_radius + EARTH_GLOW_CACHE_STEP - 1) // EARTH_GLOW_CACHE_STEP * EARTH_GLOW_CACHE_STEP,
+            )
+            glow_surface = get_earth_glow_surface(glow_radius)
+            screen.blit(glow_surface, (earth_screen_pos[0]-glow_radius, earth_screen_pos[1]-glow_radius))
 
 
         # Centrera bilden runt origo
@@ -766,7 +810,7 @@ def main():
                 partial_points = orbit_prediction_points[:max_index]
             if len(partial_points) >= 2:
                 screen_points = [
-                    world_to_screen(px, py, ppm, tuple(camera_center))
+                    world_to_screen(px, py, ppm, camera_center_tuple)
                     for px, py in partial_points
                 ]
                 pygame.draw.lines(screen, PREDICTION_COLOR, False, screen_points, 2)
@@ -778,7 +822,10 @@ def main():
                 trail_surface.fill((0, 0, 0, 0))
                 trail_prev_screen_pos = None
                 trail_last_ppm = ppm
-                trail_last_camera = camera_center.copy()
+                if trail_last_camera is not None:
+                    np.copyto(trail_last_camera, camera_center)
+                else:
+                    trail_last_camera = camera_center.copy()
 
             trail_surface.fill((0, 0, 0, TRAIL_FADE_ALPHA), special_flags=pygame.BLEND_RGBA_SUB)
         else:
@@ -786,18 +833,21 @@ def main():
             trail_prev_screen_pos = None
 
         # Satellit
-        sat_pos = world_to_screen(r[0], r[1], ppm, tuple(camera_center))
+        sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
         if show_trail:
             if trail_prev_screen_pos is not None:
                 pygame.draw.line(trail_surface, TRAIL_COLOR_ALPHA, trail_prev_screen_pos, sat_pos, 3)
             trail_prev_screen_pos = sat_pos
             trail_last_ppm = ppm
-            trail_last_camera = camera_center.copy()
+            if trail_last_camera is not None:
+                np.copyto(trail_last_camera, camera_center)
+            else:
+                trail_last_camera = camera_center.copy()
             screen.blit(trail_surface, (0, 0))
         draw_satellite(screen, sat_pos)
 
         for marker_type, mx, my in orbit_markers:
-            marker_pos = world_to_screen(mx, my, ppm, tuple(camera_center))
+            marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
             color = PERICENTER_COLOR if marker_type == "pericenter" else APOCENTER_COLOR
             pygame.draw.circle(screen, color, marker_pos, 6)
             pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
@@ -825,7 +875,7 @@ def main():
             #y += 24
 
         for btn in sim_buttons:
-            btn.draw(screen, font)
+            btn.draw(screen, font, mouse_pos)
 
         pygame.display.flip()
         clock.tick()
