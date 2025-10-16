@@ -2,7 +2,6 @@
 import json
 import math
 import os
-import random
 import time
 import pygame
 from pygame.locals import *  # noqa: F401,F403 - required for constants such as FULLSCREEN
@@ -14,15 +13,28 @@ from functools import lru_cache
 from logging_utils import RunLogger
 
 
-def create_vertical_gradient(width: int, height: int, top_color: tuple[int, int, int], bottom_color: tuple[int, int, int]) -> pygame.Surface:
+def create_minimal_background(
+    width: int,
+    height: int,
+    base_color: tuple[int, int, int],
+    highlight_color: tuple[int, int, int] | None = None,
+) -> pygame.Surface:
     surface = pygame.Surface((width, height))
-    for y in range(height):
-        ratio = y / max(1, height - 1)
-        color = tuple(
-            int(top_color[i] + (bottom_color[i] - top_color[i]) * ratio)
-            for i in range(3)
-        )
-        pygame.draw.line(surface, color, (0, y), (width, y))
+    surface.fill(base_color)
+
+    if highlight_color is not None:
+        overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+        fade_height = max(1, int(height * 0.35))
+        for y in range(fade_height):
+            t = y / fade_height
+            blended = tuple(
+                int(highlight_color[i] * (1 - t) + base_color[i] * t)
+                for i in range(3)
+            )
+            alpha = int(90 * (1 - t))
+            pygame.draw.line(overlay, (*blended, alpha), (0, y), (width, y))
+        surface.blit(overlay, (0, 0))
+
     return surface.convert()
 
 
@@ -115,35 +127,24 @@ def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tu
     pygame.draw.polygon(surface, VEL_COLOR, [end, left, right])
 
 
-def generate_starfield(num_stars: int) -> list[dict[str, float | tuple[int, int]]]:
-    stars: list[dict[str, float | tuple[int, int]]] = []
-    for _ in range(num_stars):
-        x = random.uniform(0, WIDTH)
-        y = random.uniform(0, HEIGHT)
-        size = random.choice([1, 1, 1, 2])
-        brightness = random.randint(140, 220)
-        parallax = random.uniform(0.05, 0.35)
-        stars.append({
-            "pos": (x, y),
-            "size": size,
-            "brightness": brightness,
-            "parallax": parallax,
-        })
-    return stars
+def create_background_markers(width: int, height: int) -> list[tuple[int, int]]:
+    inset_x = int(width * 0.12)
+    inset_y = int(height * 0.14)
+    centers = [
+        (inset_x, inset_y),
+        (width - inset_x, inset_y // 2 + inset_y),
+        (inset_x // 2 + inset_x, height - inset_y),
+        (width - inset_x, height - inset_y // 2),
+        (width // 2, inset_y),
+        (width // 2, height - inset_y // 2),
+    ]
+    return centers
 
 
-def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: float) -> None:
-    offset_x = camera_center[0] * ppm
-    offset_y = camera_center[1] * ppm
-    for star in STARFIELD:
-        base_x, base_y = star["pos"]  # type: ignore[index]
-        parallax = star["parallax"]  # type: ignore[index]
-        sx = int((base_x - offset_x * parallax) % WIDTH)
-        sy = int((base_y + offset_y * parallax) % HEIGHT)
-        brightness = star["brightness"]  # type: ignore[index]
-        color = (brightness, brightness, brightness)
-        size = star["size"]  # type: ignore[index]
-        surface.fill(color, (sx, sy, size, size))
+def draw_background_markers(surface: pygame.Surface, markers: list[tuple[int, int]]) -> None:
+    for cx, cy in markers:
+        pygame.draw.circle(surface, BACKGROUND_MARKER_COLOR, (cx, cy), 2)
+        pygame.draw.circle(surface, BACKGROUND_MARKER_COLOR, (cx, cy), 8, 1)
 
 # =======================
 #   FYSIK & KONSTANTER
@@ -171,30 +172,30 @@ ESCAPE_RADIUS_FACTOR = 20.0
 # Dessa värden sätts om efter att displayen initierats, men behöver
 # startvärden för typkontroller och tooling.
 WIDTH, HEIGHT = 1000, 800
-BG_COLOR_TOP = (5, 10, 25)
-BG_COLOR_BOTTOM = (10, 30, 60)
-EARTH_CORE_COLOR = (70, 170, 255)
-EARTH_GLOW_COLOR = (30, 110, 200)
-SAT_COLOR = (255, 255, 230)
-SAT_HALO_COLOR = (255, 200, 120, 120)
-HUD_TEXT_COLOR = (245, 245, 245)
-HUD_SHADOW_COLOR = (0, 0, 0, 160)
-PREDICTION_COLOR = (120, 180, 255)
-VEL_COLOR = (255, 120, 120)
-BUTTON_COLOR = (35, 55, 90)
-BUTTON_HOVER_COLOR = (70, 110, 160)
-BUTTON_TEXT_COLOR = (240, 245, 250)
-MENU_TITLE_COLOR = (220, 230, 255)
-MENU_SUBTITLE_COLOR = (150, 165, 200)
-PERICENTER_COLOR = (255, 180, 120)
-APOCENTER_COLOR = (120, 200, 255)
+BG_COLOR_TOP = (18, 21, 24)
+BG_COLOR_BOTTOM = (42, 50, 56)
+EARTH_CORE_COLOR = (122, 176, 176)
+EARTH_GLOW_COLOR = (70, 108, 116)
+SAT_COLOR = (222, 224, 220)
+SAT_HALO_COLOR = (122, 176, 176, 110)
+HUD_TEXT_COLOR = (220, 224, 226)
+HUD_SHADOW_COLOR = (8, 10, 12, 160)
+PREDICTION_COLOR = (146, 188, 190)
+VEL_COLOR = (204, 140, 112)
+BUTTON_COLOR = (42, 52, 58)
+BUTTON_HOVER_COLOR = (68, 84, 92)
+BUTTON_TEXT_COLOR = (220, 224, 226)
+MENU_TITLE_COLOR = (208, 216, 218)
+MENU_SUBTITLE_COLOR = (132, 152, 156)
+PERICENTER_COLOR = (214, 150, 120)
+APOCENTER_COLOR = (136, 176, 180)
 
-EARTH_GLOW_OVERLAY_COLOR = (80, 180, 255, 40)
+EARTH_GLOW_OVERLAY_COLOR = (96, 132, 136, 40)
 EARTH_GLOW_CACHE_STEP = 4
 EARTH_SCALE_CACHE_PRECISION = 200
 EARTH_SCALE_CACHE_MAX = 256
 
-STARFIELD: list[dict[str, float | tuple[int, int]]] = []
+BACKGROUND_MARKER_COLOR = (86, 114, 118)
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
     return 0.25 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
@@ -352,10 +353,8 @@ def main():
     title_font = pygame.font.SysFont("consolas", 40, bold=True)
     subtitle_font = pygame.font.SysFont("consolas", 24)
 
-    gradient_bg = create_vertical_gradient(WIDTH, HEIGHT, BG_COLOR_TOP, BG_COLOR_BOTTOM)
-    global STARFIELD
-    if not STARFIELD:
-        STARFIELD = generate_starfield(450)
+    background_surface = create_minimal_background(WIDTH, HEIGHT, BG_COLOR_TOP, BG_COLOR_BOTTOM)
+    background_markers = create_background_markers(WIDTH, HEIGHT)
 
     # Simuleringsstate
     r = R0.copy()
@@ -637,7 +636,8 @@ def main():
                     btn.handle_event(event)
 
         if state == "menu":
-            screen.blit(gradient_bg, (0, 0))
+            screen.blit(background_surface, (0, 0))
+            draw_background_markers(screen, background_markers)
             title_surf = title_font.render("Omloppsbana i realtid", True, MENU_TITLE_COLOR)
             subtitle_surf = subtitle_font.render("Välj ett alternativ för att starta", True, MENU_SUBTITLE_COLOR)
             title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 150))
@@ -651,7 +651,7 @@ def main():
 
             # --- FPS Counter ---
             fps_value = clock.get_fps()
-            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (200, 200, 200))
+            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
             # placera i nedre högra hörnet
             text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
             screen.blit(fps_text, text_rect)
@@ -763,8 +763,8 @@ def main():
         camera_center += (camera_target - camera_center) * 0.1
 
         # Bakgrund
-        screen.blit(gradient_bg, (0, 0))
-        draw_starfield(screen, camera_center, ppm)
+        screen.blit(background_surface, (0, 0))
+        draw_background_markers(screen, background_markers)
 
         camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
         mouse_pos = pygame.mouse.get_pos()
@@ -775,7 +775,7 @@ def main():
 
         # --- FPS Counter ---
         fps_value = clock.get_fps()
-        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (200, 200, 200))
+        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
 
         # placera i nedre högra hörnet
         text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
@@ -836,7 +836,7 @@ def main():
             marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
             color = PERICENTER_COLOR if marker_type == "pericenter" else APOCENTER_COLOR
             pygame.draw.circle(screen, color, marker_pos, 6)
-            pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
+            pygame.draw.circle(screen, HUD_TEXT_COLOR, marker_pos, 6, 2)
             label = "Periapsis" if marker_type == "pericenter" else "Apoapsis"
             altitude_km = (mr - EARTH_RADIUS) / 1_000.0
             text = f"{label}: {altitude_km:,.1f} km alt"
