@@ -9,6 +9,7 @@ from pygame.locals import *  # noqa: F401,F403 - required for constants such as 
 import sys
 import numpy as np
 from collections import deque
+from dataclasses import dataclass
 from functools import lru_cache
 
 from logging_utils import RunLogger
@@ -164,6 +165,72 @@ def draw_satellite(
     surface.blit(sat_surface, sat_rect)
 
 
+def draw_menu_planet(
+    surface: pygame.Surface,
+    center: tuple[int, int],
+    diameter: int,
+    *,
+    image: pygame.Surface | None = None,
+) -> None:
+    if diameter <= 0:
+        return
+
+    if image is not None:
+        width, height = image.get_size()
+        scale = diameter / max(width, height)
+        new_size = (
+            max(1, int(width * scale)),
+            max(1, int(height * scale)),
+        )
+        scaled = pygame.transform.smoothscale(image, new_size)
+        rect = scaled.get_rect(center=center)
+        surface.blit(scaled, rect)
+        return
+
+    radius = diameter // 2
+    glow_radius = int(radius * 1.35)
+    placeholder_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+    pygame.draw.circle(
+        placeholder_surface,
+        MENU_PLANET_GLOW_COLOR,
+        (glow_radius, glow_radius),
+        glow_radius,
+    )
+
+    planet_surface = _planet_surface(radius)
+    planet_rect = planet_surface.get_rect(center=(glow_radius, glow_radius))
+    placeholder_surface.blit(planet_surface, planet_rect)
+
+    orbit_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+    orbit_rect = pygame.Rect(0, 0, int(radius * 2.6), int(radius * 1.6))
+    orbit_rect.center = (glow_radius, glow_radius + MENU_PLANET_ORBIT_OFFSET)
+    pygame.draw.ellipse(
+        orbit_surface,
+        MENU_PLANET_RING_COLOR,
+        orbit_rect,
+        MENU_PLANET_RING_WIDTH,
+    )
+    orbit_surface = pygame.transform.rotate(orbit_surface, -18)
+    placeholder_surface.blit(orbit_surface, (0, 0))
+
+    satellite_radius = max(3, radius // 7)
+    satellite_angle = math.radians(32)
+    satellite_distance = radius + int(radius * 0.55)
+    satellite_pos = (
+        glow_radius + int(math.cos(satellite_angle) * satellite_distance),
+        glow_radius - int(math.sin(satellite_angle) * satellite_distance),
+    )
+    pygame.draw.circle(
+        placeholder_surface,
+        MENU_PLANET_RING_COLOR,
+        satellite_pos,
+        satellite_radius,
+    )
+
+    placeholder_surface.set_alpha(MENU_PLANET_PLACEHOLDER_ALPHA)
+    surface.blit(placeholder_surface, placeholder_surface.get_rect(center=center))
+
+
 def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
     pygame.draw.line(surface, VEL_COLOR, start, end, 2)
     angle = math.atan2(start[1] - end[1], end[0] - start[0])
@@ -219,6 +286,19 @@ def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: floa
         sy = int((base_y + offset_y) % HEIGHT)
         surface.blit(star_surface, (sx - radius, sy - radius))
 
+
+def load_font(preferred_names: list[str], size: int, *, bold: bool = False) -> pygame.font.Font:
+    for name in preferred_names:
+        try:
+            match = pygame.font.match_font(name, bold=bold)
+        except Exception:
+            match = None
+        if match:
+            return pygame.font.Font(match, size)
+    fallback_name = preferred_names[0] if preferred_names else None
+    return pygame.font.SysFont(fallback_name, size, bold=bold)
+
+
 # =======================
 #   FYSIK & KONSTANTER
 # =======================
@@ -245,8 +325,8 @@ ESCAPE_RADIUS_FACTOR = 20.0
 # Dessa värden sätts om efter att displayen initierats, men behöver
 # startvärden för typkontroller och tooling.
 WIDTH, HEIGHT = 1000, 800
-BG_COLOR_TOP = (11, 16, 32)
-BG_COLOR_BOTTOM = (10, 14, 25)
+BG_COLOR_TOP = (0, 17, 40)
+BG_COLOR_BOTTOM = (0, 34, 72)
 PLANET_COLOR_CORE = (255, 183, 77)
 PLANET_COLOR_MID = (240, 98, 146)
 PLANET_COLOR_EDGE = (124, 77, 255)
@@ -259,7 +339,7 @@ SAT_LIGHT_DIR = (-0.55, -0.4)
 SAT_SHADOW_COLOR = (6, 12, 24, 120)
 SAT_BASE_RADIUS = 6
 HUD_TEXT_COLOR = (234, 241, 255)
-HUD_TEXT_ALPHA = int(255 * 0.85)
+HUD_TEXT_ALPHA = 255
 HUD_SHADOW_COLOR = (10, 15, 30, 120)
 ORBIT_PRIMARY_COLOR = (46, 209, 195)
 ORBIT_SECONDARY_COLOR = (46, 209, 195, 160)
@@ -272,7 +352,17 @@ BUTTON_HOVER_COLOR = (28, 44, 66, int(255 * 0.68))
 BUTTON_TEXT_COLOR = (234, 241, 255)
 BUTTON_RADIUS = 12
 MENU_TITLE_COLOR = (234, 241, 255)
-MENU_SUBTITLE_COLOR = (164, 182, 210)
+MENU_SUBTITLE_COLOR = (180, 198, 228)
+MENU_BUTTON_COLOR = (9, 44, 92, 220)
+MENU_BUTTON_HOVER_COLOR = (24, 74, 140, 235)
+MENU_BUTTON_BORDER_COLOR = (255, 255, 255, 50)
+MENU_BUTTON_TEXT_COLOR = (234, 241, 255)
+MENU_BUTTON_RADIUS = 20
+MENU_PLANET_GLOW_COLOR = (88, 146, 255, 70)
+MENU_PLANET_RING_COLOR = (93, 200, 255, 200)
+MENU_PLANET_RING_WIDTH = 4
+MENU_PLANET_ORBIT_OFFSET = 18
+MENU_PLANET_PLACEHOLDER_ALPHA = 220
 LABEL_BACKGROUND_COLOR = (12, 18, 30, int(255 * 0.18))
 LABEL_MARKER_COLOR = (46, 209, 195)
 LABEL_TEXT_COLOR = (234, 241, 255)
@@ -377,10 +467,37 @@ def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[fl
     return period, points
 
 
+@dataclass(frozen=True)
+class ButtonVisualStyle:
+    base_color: tuple[int, int, int] | tuple[int, int, int, int]
+    hover_color: tuple[int, int, int] | tuple[int, int, int, int]
+    text_color: tuple[int, int, int]
+    radius: int
+    border_color: tuple[int, int, int] | tuple[int, int, int, int] | None = None
+    border_width: int = 0
+
+
+DEFAULT_BUTTON_STYLE = ButtonVisualStyle(
+    base_color=BUTTON_COLOR,
+    hover_color=BUTTON_HOVER_COLOR,
+    text_color=BUTTON_TEXT_COLOR,
+    radius=BUTTON_RADIUS,
+)
+
+MENU_BUTTON_STYLE = ButtonVisualStyle(
+    base_color=MENU_BUTTON_COLOR,
+    hover_color=MENU_BUTTON_HOVER_COLOR,
+    text_color=MENU_BUTTON_TEXT_COLOR,
+    radius=MENU_BUTTON_RADIUS,
+    border_color=MENU_BUTTON_BORDER_COLOR,
+    border_width=2,
+)
+
+
 class Button:
     """Simple rectangular button with hover feedback and callbacks."""
 
-    def __init__(self, rect, text, callback, text_getter=None):
+    def __init__(self, rect, text, callback, text_getter=None, *, style: ButtonVisualStyle | None = None):
         self.rect = pygame.Rect(rect)
         self._text = text
         self._callback = callback
@@ -388,6 +505,7 @@ class Button:
         self._cached_text_surface: pygame.Surface | None = None
         self._cached_text: str | None = None
         self._cached_font_id: int | None = None
+        self._style = style
 
     def get_text(self):
         if self._text_getter is not None:
@@ -398,14 +516,23 @@ class Button:
         if mouse_pos is None:
             mouse_pos = pygame.mouse.get_pos()
         hovered = self.rect.collidepoint(mouse_pos)
-        color = BUTTON_HOVER_COLOR if hovered else BUTTON_COLOR
+        style = self._style or DEFAULT_BUTTON_STYLE
+        color = style.hover_color if hovered else style.base_color
         button_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
         pygame.draw.rect(
             button_surface,
             color,
             button_surface.get_rect(),
-            border_radius=BUTTON_RADIUS,
+            border_radius=style.radius,
         )
+        if style.border_color is not None and style.border_width > 0:
+            pygame.draw.rect(
+                button_surface,
+                style.border_color,
+                button_surface.get_rect(),
+                style.border_width,
+                border_radius=style.radius,
+            )
         surface.blit(button_surface, self.rect.topleft)
         text_value = self.get_text()
         font_id = id(font)
@@ -414,7 +541,7 @@ class Button:
             or text_value != self._cached_text
             or font_id != self._cached_font_id
         ):
-            self._cached_text_surface = font.render(text_value, True, BUTTON_TEXT_COLOR)
+            self._cached_text_surface = font.render(text_value, True, style.text_color)
             self._cached_text = text_value
             self._cached_font_id = font_id
         text_surf = self._cached_text_surface
@@ -462,13 +589,80 @@ def main():
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 18)
-    title_font = pygame.font.SysFont("consolas", 40, bold=True)
-    subtitle_font = pygame.font.SysFont("consolas", 24)
+
+    min_dimension = min(WIDTH, HEIGHT)
+    title_font_size = max(48, int(min_dimension * 0.075))
+    subtitle_font_size = max(26, int(min_dimension * 0.032))
 
     gradient_bg = create_vertical_gradient(WIDTH, HEIGHT, BG_COLOR_TOP, BG_COLOR_BOTTOM)
+    menu_background = gradient_bg.copy()
+
+    star_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    star_rng = random.Random(5123)
+    star_count = max(120, int(max(WIDTH, HEIGHT) * 0.25))
+    for _ in range(star_count):
+        radius = star_rng.choice([1, 1, 1, 2, 2, 3])
+        alpha = star_rng.randint(60, 140)
+        color = (
+            star_rng.randint(120, 180),
+            star_rng.randint(160, 210),
+            255,
+            alpha,
+        )
+        x = star_rng.randint(0, WIDTH)
+        y = star_rng.randint(0, HEIGHT)
+        pygame.draw.circle(star_overlay, color, (x, y), radius)
+    menu_background.blit(star_overlay, (0, 0))
+
+    menu_glow_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    glow_radius = int(min(WIDTH, HEIGHT) * 0.45)
+    pygame.draw.circle(
+        menu_glow_surface,
+        (70, 120, 255, 45),
+        (WIDTH // 2, HEIGHT // 2),
+        glow_radius,
+    )
+    menu_background.blit(menu_glow_surface, (0, 0))
+
+    title_font = load_font(["montserrat", "futura", "avenir", "arial"], title_font_size, bold=True)
+    subtitle_font = load_font(["montserrat", "futura", "avenir", "arial"], subtitle_font_size)
+
+    menu_planet_diameter = max(180, min(320, int(min_dimension * 0.32)))
+    menu_button_height = max(56, int(menu_planet_diameter * 0.26))
+    menu_button_font_size = min(menu_button_height - 12, max(26, int(menu_button_height * 0.52)))
+    menu_button_font = load_font(
+        ["montserrat", "futura", "avenir", "arial"],
+        menu_button_font_size,
+        bold=True,
+    )
+
+    assets_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets"))
+    planet_image_path = os.path.join(assets_root, "menu_planet.png")
+    menu_planet_image: pygame.Surface | None = None
+    if os.path.exists(planet_image_path):
+        try:
+            menu_planet_image = pygame.image.load(planet_image_path).convert_alpha()
+        except pygame.error:
+            menu_planet_image = None
+
     global STARFIELD
     if not STARFIELD:
         STARFIELD = generate_starfield(220)
+
+    layout_center_y = HEIGHT // 2
+    title_y = max(int(layout_center_y - HEIGHT * 0.27), int(HEIGHT * 0.14))
+    subtitle_y = title_y + max(40, int(HEIGHT * 0.06))
+    planet_center = (WIDTH // 2, layout_center_y - int(HEIGHT * 0.03))
+    menu_button_width = max(280, min(440, int(WIDTH * 0.35)))
+    menu_button_gap = max(20, int(menu_button_height * 0.36))
+    button_block_height = menu_button_height * 2 + menu_button_gap
+    default_button_y = planet_center[1] + menu_planet_diameter // 2 + max(48, int(HEIGHT * 0.07))
+    max_button_y = HEIGHT - button_block_height - 80
+    menu_button_y = min(default_button_y, max_button_y)
+    menu_button_y = max(menu_button_y, subtitle_y + max(60, int(HEIGHT * 0.08)))
+    menu_button_x = WIDTH // 2 - menu_button_width // 2
+    menu_title_text = "SIMULERING AV OMLOPPSBANA"
+    menu_subtitle_text = "En interaktiv visualisering"
 
     # Simuleringsstate
     r = R0.copy()
@@ -602,17 +796,12 @@ def main():
         pygame.quit()
         sys.exit()
 
-    menu_button_width = 260
-    menu_button_height = 56
-    menu_button_x = WIDTH // 2 - menu_button_width // 2
-    menu_button_y = HEIGHT // 2 - menu_button_height
-    menu_button_gap = 20
-
     menu_buttons = [
         Button(
             (menu_button_x, menu_button_y, menu_button_width, menu_button_height),
-            "Starta Simulation",
+            "STARTA SIMULATION",
             start_simulation,
+            style=MENU_BUTTON_STYLE,
         ),
         Button(
             (
@@ -621,8 +810,9 @@ def main():
                 menu_button_width,
                 menu_button_height,
             ),
-            "Quit",
+            "QUIT",
             quit_app,
+            style=MENU_BUTTON_STYLE,
         ),
     ]
 
@@ -752,22 +942,25 @@ def main():
                     btn.handle_event(event)
 
         if state == "menu":
-            screen.blit(gradient_bg, (0, 0))
-            title_surf = title_font.render("Gymnasiearbete - Simulering av omloppsbana", True, MENU_TITLE_COLOR)
-            # Av Axel Jönsson
-            author_surf = subtitle_font.render("Av Axel Jönsson", True, MENU_SUBTITLE_COLOR)
-            title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 150))
-            author_rect = author_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
+            screen.blit(menu_background, (0, 0))
+
+            title_surf = title_font.render(menu_title_text, True, MENU_TITLE_COLOR)
+            title_rect = title_surf.get_rect(center=(WIDTH // 2, title_y))
             screen.blit(title_surf, title_rect)
-            screen.blit(author_surf, author_rect)   
+
+            subtitle_surf = subtitle_font.render(menu_subtitle_text, True, MENU_SUBTITLE_COLOR)
+            subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, subtitle_y))
+            screen.blit(subtitle_surf, subtitle_rect)
+
+            draw_menu_planet(screen, planet_center, menu_planet_diameter, image=menu_planet_image)
 
             menu_mouse_pos = pygame.mouse.get_pos()
             for btn in menu_buttons:
-                btn.draw(screen, subtitle_font, menu_mouse_pos)
+                btn.draw(screen, menu_button_font, menu_mouse_pos)
 
             # --- FPS Counter ---
             fps_value = clock.get_fps()
-            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (200, 200, 200))
+            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (140, 180, 220))
             # placera i nedre högra hörnet
             text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
             screen.blit(fps_text, text_rect)
