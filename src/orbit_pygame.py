@@ -1,14 +1,138 @@
 # src/orbit_pygame.py
 import json
 import math
+import random
 import time
 import pygame
 import sys
 import numpy as np
 from collections import deque
-from itertools import islice
+from functools import lru_cache
 
 from logging_utils import RunLogger
+
+
+def create_vertical_gradient(width: int, height: int, top_color: tuple[int, int, int], bottom_color: tuple[int, int, int]) -> pygame.Surface:
+    surface = pygame.Surface((width, height))
+    for y in range(height):
+        ratio = y / max(1, height - 1)
+        color = tuple(
+            int(top_color[i] + (bottom_color[i] - top_color[i]) * ratio)
+            for i in range(3)
+        )
+        pygame.draw.line(surface, color, (0, y), (width, y))
+    return surface.convert()
+
+
+def draw_text_with_shadow(surface: pygame.Surface, font: pygame.font.Font, text: str, position: tuple[int, int]) -> None:
+    shadow_color = HUD_SHADOW_COLOR[:3]
+    shadow_surf = font.render(text, True, shadow_color)
+    if len(HUD_SHADOW_COLOR) == 4:
+        shadow_surf.set_alpha(HUD_SHADOW_COLOR[3])
+    text_surf = font.render(text, True, HUD_TEXT_COLOR)
+    x, y = position
+    surface.blit(shadow_surf, (x + 2, y + 2))
+    surface.blit(text_surf, position)
+
+
+def create_radial_surface(
+    radius: int,
+    inner_color: tuple[int, ...],
+    outer_color: tuple[int, ...],
+) -> pygame.Surface:
+    size = radius * 2
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    cx = cy = radius
+    inner_rgba = list(inner_color) + [255] if len(inner_color) == 3 else list(inner_color)
+    outer_rgba = list(outer_color) + [0] if len(outer_color) == 3 else list(outer_color)
+    for r in range(radius, 0, -1):
+        t = r / radius
+        color = [
+            int(inner_rgba[i] * t + outer_rgba[i] * (1 - t))
+            for i in range(4)
+        ]
+        pygame.draw.circle(surface, color, (cx, cy), r)
+    return surface
+
+
+@lru_cache(maxsize=128)
+def _earth_surface(radius: int) -> pygame.Surface:
+    glow_radius = max(radius + 20, int(radius * 1.4))
+    surface_size = glow_radius * 2
+    surface = pygame.Surface((surface_size, surface_size), pygame.SRCALPHA)
+    glow_surface = create_radial_surface(glow_radius, EARTH_CORE_COLOR + (255,), EARTH_GLOW_COLOR + (0,))
+    surface.blit(glow_surface, (0, 0))
+    pygame.draw.circle(surface, EARTH_CORE_COLOR, (glow_radius, glow_radius), radius)
+    return surface
+
+
+def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
+    if radius <= 0:
+        return
+    earth_surface = _earth_surface(radius)
+    rect = earth_surface.get_rect(center=position)
+    surface.blit(earth_surface, rect)
+
+
+@lru_cache(maxsize=1)
+def _satellite_surface() -> pygame.Surface:
+    halo_radius = 14
+    surface = pygame.Surface((halo_radius * 2, halo_radius * 2), pygame.SRCALPHA)
+    halo_surface = create_radial_surface(halo_radius, SAT_HALO_COLOR, (0, 0, 0, 0))
+    surface.blit(halo_surface, (0, 0))
+    pygame.draw.circle(surface, SAT_COLOR, (halo_radius, halo_radius), 5)
+    return surface
+
+
+def draw_satellite(surface: pygame.Surface, position: tuple[int, int]) -> None:
+    sat_surface = _satellite_surface()
+    rect = sat_surface.get_rect(center=position)
+    surface.blit(sat_surface, rect)
+
+
+def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
+    pygame.draw.line(surface, VEL_COLOR, start, end, 2)
+    angle = math.atan2(start[1] - end[1], end[0] - start[0])
+    left = (
+        int(end[0] - head_length * math.cos(angle - head_angle)),
+        int(end[1] + head_length * math.sin(angle - head_angle)),
+    )
+    right = (
+        int(end[0] - head_length * math.cos(angle + head_angle)),
+        int(end[1] + head_length * math.sin(angle + head_angle)),
+    )
+    pygame.draw.polygon(surface, VEL_COLOR, [end, left, right])
+
+
+def generate_starfield(num_stars: int) -> list[dict[str, float | tuple[int, int]]]:
+    stars: list[dict[str, float | tuple[int, int]]] = []
+    for _ in range(num_stars):
+        x = random.uniform(0, WIDTH)
+        y = random.uniform(0, HEIGHT)
+        size = random.choice([1, 1, 1, 2])
+        brightness = random.randint(140, 220)
+        parallax = random.uniform(0.05, 0.35)
+        stars.append({
+            "pos": (x, y),
+            "size": size,
+            "brightness": brightness,
+            "parallax": parallax,
+        })
+    return stars
+
+
+def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: float) -> None:
+    offset_x = camera_center[0] * ppm
+    offset_y = camera_center[1] * ppm
+    for star in STARFIELD:
+        base_x, base_y = star["pos"]  # type: ignore[index]
+        parallax = star["parallax"]  # type: ignore[index]
+        sx = int((base_x - offset_x * parallax) % WIDTH)
+        sy = int((base_y + offset_y * parallax) % HEIGHT)
+        brightness = star["brightness"]  # type: ignore[index]
+        color = (brightness, brightness, brightness)
+        size = star["size"]  # type: ignore[index]
+        surface.fill(color, (sx, sy, size, size))
 
 # =======================
 #   FYSIK & KONSTANTER
@@ -27,26 +151,34 @@ V0 = np.array([0.0, 7_600.0])      # m/s
 DT_PHYS = 0.25                 # fysikens tidssteg (sekunder)
 REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
-TRAIL_MAX = 99999              # punkter i spår
-TRAIL_DRAW_MAX = 2000          # max punkter att rita per frame
 LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
 ESCAPE_RADIUS_FACTOR = 20.0
+TRAIL_FADE_ALPHA = 12
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
 # =======================
 WIDTH, HEIGHT = 1000, 800
-BG_COLOR = (10, 12, 18)
-EARTH_COLOR = (70, 170, 255)
-SAT_COLOR = (255, 230, 120)
-TRAIL_COLOR = (120, 210, 180)
-HUD_COLOR = (220, 230, 240)
+BG_COLOR_TOP = (5, 10, 25)
+BG_COLOR_BOTTOM = (10, 30, 60)
+EARTH_CORE_COLOR = (70, 170, 255)
+EARTH_GLOW_COLOR = (30, 110, 200)
+SAT_COLOR = (255, 255, 230)
+SAT_HALO_COLOR = (255, 200, 120, 120)
+TRAIL_COLOR = (140, 240, 200)
+TRAIL_COLOR_ALPHA = (140, 240, 200, 220)
+HUD_TEXT_COLOR = (245, 245, 245)
+HUD_SHADOW_COLOR = (0, 0, 0, 160)
 VEL_COLOR = (255, 120, 120)
 BUTTON_COLOR = (35, 55, 90)
 BUTTON_HOVER_COLOR = (70, 110, 160)
 BUTTON_TEXT_COLOR = (240, 245, 250)
 MENU_TITLE_COLOR = (220, 230, 255)
 MENU_SUBTITLE_COLOR = (150, 165, 200)
+PERICENTER_COLOR = (255, 180, 120)
+APOCENTER_COLOR = (120, 200, 255)
+
+STARFIELD: list[dict[str, float | tuple[int, int]]] = []
 
 PIXELS_PER_METER = 0.25 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
 MIN_PPM = 1e-7
@@ -126,9 +258,14 @@ def main():
     pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     clock = pygame.time.Clock()
-    font = pygame.font.SysFont("consolas", 18)
+    font = pygame.font.SysFont("consolas", 20)
     title_font = pygame.font.SysFont("consolas", 40, bold=True)
     subtitle_font = pygame.font.SysFont("consolas", 24)
+
+    gradient_bg = create_vertical_gradient(WIDTH, HEIGHT, BG_COLOR_TOP, BG_COLOR_BOTTOM)
+    global STARFIELD
+    if not STARFIELD:
+        STARFIELD = generate_starfield(450)
 
     # Simuleringsstate
     r = R0.copy()
@@ -136,12 +273,24 @@ def main():
     t_sim = 0.0
     paused = False
     show_trail = True
-    trail = deque(maxlen=TRAIL_MAX)
     ppm = PIXELS_PER_METER
+    ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
     camera_mode = "earth"
+    camera_center = np.array([0.0, 0.0], dtype=float)
+    camera_target = np.array([0.0, 0.0], dtype=float)
 
     vel_vector_scale = 500.0  # endast visuellt
+    arrow_head_length = 20
+    arrow_head_angle = math.radians(28)
+
+    trail_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    trail_surface.fill((0, 0, 0, 0))
+    trail_prev_screen_pos: tuple[int, int] | None = None
+    trail_last_ppm = ppm
+    trail_last_camera = camera_center.copy()
+
+    orbit_markers: deque[tuple[str, float, float]] = deque(maxlen=20)
 
     # tidsackumulator för fast fysik
     accumulator = 0.0
@@ -162,16 +311,17 @@ def main():
             logger = None
 
     def reset():
-        nonlocal r, v, t_sim, trail, paused, ppm, real_time_speed
+        nonlocal r, v, t_sim, paused, ppm, real_time_speed
         nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
-        nonlocal impact_logged, escape_logged
+        nonlocal impact_logged, escape_logged, ppm_target
+        nonlocal trail_prev_screen_pos, trail_last_ppm, trail_last_camera, camera_center, orbit_markers, camera_target
         close_logger()
         r = R0.copy()
         v = V0.copy()
         t_sim = 0.0
-        trail = deque(maxlen=TRAIL_MAX)
         paused = False
         ppm = PIXELS_PER_METER
+        ppm_target = ppm
         real_time_speed = REAL_TIME_SPEED
         accumulator = 0.0
         last_time = time.perf_counter()
@@ -180,6 +330,13 @@ def main():
         prev_dr = None
         impact_logged = False
         escape_logged = False
+        trail_surface.fill((0, 0, 0, 0))
+        trail_prev_screen_pos = None
+        trail_last_ppm = ppm
+        orbit_markers.clear()
+        camera_center[:] = (0.0, 0.0)
+        camera_target[:] = (0.0, 0.0)
+        trail_last_camera = camera_center.copy()
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
@@ -342,9 +499,9 @@ def main():
                     elif event.key == pygame.K_t:
                         show_trail = not show_trail
                     elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
-                        ppm = clamp(ppm * 1.2, MIN_PPM, MAX_PPM)     # zoom in
+                        ppm_target = clamp(ppm_target * 1.2, MIN_PPM, MAX_PPM)     # zoom in
                     elif event.key == pygame.K_MINUS:
-                        ppm = clamp(ppm / 1.2, MIN_PPM, MAX_PPM)     # zoom out
+                        ppm_target = clamp(ppm_target / 1.2, MIN_PPM, MAX_PPM)     # zoom out
 
                     # ---- Piltangenter styr simhastighet (ingen boost längre) ----
                     elif event.key == pygame.K_RIGHT:
@@ -355,6 +512,8 @@ def main():
                         real_time_speed = min(real_time_speed * 2.0, 10_000.0)
                     elif event.key == pygame.K_DOWN:
                         real_time_speed = max(real_time_speed / 2.0, 0.1)
+                    elif event.key == pygame.K_c:
+                        toggle_camera()
             if state == "menu":
                 for btn in menu_buttons:
                     btn.handle_event(event)
@@ -363,7 +522,7 @@ def main():
                     btn.handle_event(event)
 
         if state == "menu":
-            screen.fill(BG_COLOR)
+            screen.blit(gradient_bg, (0, 0))
             title_surf = title_font.render("Omloppsbana i realtid", True, MENU_TITLE_COLOR)
             subtitle_surf = subtitle_font.render("Välj ett alternativ för att starta", True, MENU_SUBTITLE_COLOR)
             title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 150))
@@ -397,46 +556,41 @@ def main():
             for _ in range(steps_to_run):
                 r, v = rk4_step(r, v, dt_step)
                 t_sim += dt_step
-                if show_trail:
-                    trail.append((r[0], r[1]))
+                rmag = float(np.linalg.norm(r))
+                event_logged = False
+                event_type: str | None = None
+                prev_radius = prev_r
+                dr = None
+                if prev_radius is not None:
+                    dr = rmag - prev_radius
+                    if prev_dr is not None:
+                        if prev_dr < 0.0 and dr >= 0.0:
+                            event_type = "pericenter"
+                        elif prev_dr > 0.0 and dr <= 0.0:
+                            event_type = "apocenter"
+                prev_dr = dr
+                prev_r = rmag
+
+                if event_type is not None:
+                    orbit_markers.append((event_type, float(r[0]), float(r[1])))
 
                 if logger is not None:
                     log_step_counter += 1
-                    rmag = float(np.linalg.norm(r))
                     vmag = float(np.linalg.norm(v))
                     eps = float(energy_specific(r, v))
                     e_val = float(eccentricity(r, v))
-                    event_logged = False
 
-                    prev_radius = prev_r
-                    dr = None
-                    if prev_radius is not None:
-                        dr = rmag - prev_radius
-                        if prev_dr is not None:
-                            if prev_dr < 0.0 and dr >= 0.0:
-                                logger.log_event(
-                                    [
-                                        float(t_sim),
-                                        "pericenter",
-                                        rmag,
-                                        vmag,
-                                        json.dumps({"ecc": e_val, "energy": eps}),
-                                    ]
-                                )
-                                event_logged = True
-                            elif prev_dr > 0.0 and dr <= 0.0:
-                                logger.log_event(
-                                    [
-                                        float(t_sim),
-                                        "apocenter",
-                                        rmag,
-                                        vmag,
-                                        json.dumps({"ecc": e_val, "energy": eps}),
-                                    ]
-                                )
-                                event_logged = True
-                    prev_dr = dr
-                    prev_r = rmag
+                    if event_type is not None:
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                event_type,
+                                rmag,
+                                vmag,
+                                json.dumps({"ecc": e_val, "energy": eps}),
+                            ]
+                        )
+                        event_logged = True
 
                     if not impact_logged and rmag <= EARTH_RADIUS:
                         logger.log_event(
@@ -471,37 +625,61 @@ def main():
             accumulator = 0.0
 
         # --- Render ---
-        screen.fill(BG_COLOR)
+        # Smooth zoom mot mål
+        ppm += (ppm_target - ppm) * 0.1
+        ppm = clamp(ppm, MIN_PPM, MAX_PPM)
 
-        # Kameracentrering
-        camera_center = (0.0, 0.0) if camera_mode == "earth" else (r[0], r[1])
+        # Kamera-targets
+        if camera_mode == "earth":
+            camera_target[:] = (0.0, 0.0)
+        else:
+            camera_target[:] = (r[0], r[1])
+        camera_center += (camera_target - camera_center) * 0.1
+
+        # Bakgrund
+        screen.blit(gradient_bg, (0, 0))
+        draw_starfield(screen, camera_center, ppm)
 
         # Jorden
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center)
+        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, tuple(camera_center))
         earth_px = max(2, int(EARTH_RADIUS * ppm))
-        pygame.draw.circle(screen, EARTH_COLOR, earth_screen_pos, earth_px)
+        draw_earth(screen, earth_screen_pos, earth_px)
 
         # Spår
-        if show_trail and len(trail) >= 2:
-            if len(trail) > TRAIL_DRAW_MAX:
-                step = math.ceil(len(trail) / TRAIL_DRAW_MAX)
-                sampled_trail = list(islice(trail, 0, len(trail), step))
-                if sampled_trail[-1] != trail[-1]:
-                    sampled_trail.append(trail[-1])
-            else:
-                sampled_trail = list(trail)
+        if show_trail:
+            camera_delta = np.linalg.norm(camera_center - trail_last_camera)
+            if abs(ppm - trail_last_ppm) > 1e-5 or camera_delta > 5.0:
+                trail_surface.fill((0, 0, 0, 0))
+                trail_prev_screen_pos = None
+                trail_last_ppm = ppm
+                trail_last_camera = camera_center.copy()
 
-            pts = [world_to_screen(x, y, ppm, camera_center) for (x, y) in sampled_trail]
-            pygame.draw.lines(screen, TRAIL_COLOR, False, pts, 2)
+            trail_surface.fill((0, 0, 0, TRAIL_FADE_ALPHA), special_flags=pygame.BLEND_RGBA_SUB)
+        else:
+            trail_surface.fill((0, 0, 0, 0))
+            trail_prev_screen_pos = None
 
         # Satellit
-        sat_pos = world_to_screen(r[0], r[1], ppm, camera_center)
-        pygame.draw.circle(screen, SAT_COLOR, sat_pos, 5)
+        sat_pos = world_to_screen(r[0], r[1], ppm, tuple(camera_center))
+        if show_trail:
+            if trail_prev_screen_pos is not None:
+                pygame.draw.line(trail_surface, TRAIL_COLOR_ALPHA, trail_prev_screen_pos, sat_pos, 3)
+            trail_prev_screen_pos = sat_pos
+            trail_last_ppm = ppm
+            trail_last_camera = camera_center.copy()
+            screen.blit(trail_surface, (0, 0))
+        draw_satellite(screen, sat_pos)
+
+        for marker_type, mx, my in orbit_markers:
+            marker_pos = world_to_screen(mx, my, ppm, tuple(camera_center))
+            color = PERICENTER_COLOR if marker_type == "pericenter" else APOCENTER_COLOR
+            pygame.draw.circle(screen, color, marker_pos, 6)
+            pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
 
         # Hastighetsvektor (visuell)
         vx, vy = v
-        v_end = world_to_screen(r[0] + vx*vel_vector_scale, r[1] + vy*vel_vector_scale, ppm, camera_center)
-        pygame.draw.line(screen, VEL_COLOR, sat_pos, v_end, 2)
+        v_end = world_to_screen(r[0] + vx*vel_vector_scale, r[1] + vy*vel_vector_scale, ppm, tuple(camera_center))
+        draw_velocity_arrow(screen, sat_pos, v_end, arrow_head_length, arrow_head_angle)
 
         # HUD
         rmag = np.linalg.norm(r)
@@ -512,16 +690,15 @@ def main():
             f"t = {t_sim:,.0f} s    (speed: {real_time_speed:.2f}x)",
             f"|r| = {rmag/1e6:.2f} Mm    |v| = {vmag:,.1f} m/s",
             f"energy = {eps: .3e} J/kg    e = {e:.4f}",
-            "SPACE: paus | R: reset | T: trail | +/-: zoom",
+            "SPACE: paus | R: reset | T: trail | +/-: zoom | C: kamera",
             "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
             "Knapparna till vänster speglar kontrollerna",
-            "Kamera-knappen växlar fokus mellan jord och satellit",
+            "Kamera-knappen eller C växlar fokus mellan jord och satellit",
         ]
         y = 10
         for line in hud_lines:
-            surf = font.render(line, True, HUD_COLOR)
-            screen.blit(surf, (10, y))
-            y += 20
+            draw_text_with_shadow(screen, font, line, (10, y))
+            y += 24
 
         for btn in sim_buttons:
             btn.draw(screen, font)
