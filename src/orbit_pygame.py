@@ -732,9 +732,9 @@ def main():
             "Kamera-knappen eller C växlar fokus mellan jord och satellit",
         ]
         y = 10
-        for line in hud_lines:
-            draw_text_with_shadow(screen, font, line, (10, y))
-            y += 24
+        #for line in hud_lines:
+            #draw_text_with_shadow(screen, font, line, (10, y))
+            #y += 24
 
         for btn in sim_buttons:
             btn.draw(screen, font)
