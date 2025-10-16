@@ -434,7 +434,7 @@ class Button:
 # =======================
 def main():
     pygame.init()
-    pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
+    pygame.display.set_caption("Gymnasiearbete - Simulering av omloppsbana")
     font_fps = pygame.font.SysFont("consolas", 14)
 
     fullscreen_flags = FULLSCREEN | DOUBLEBUF
@@ -611,7 +611,7 @@ def main():
     menu_buttons = [
         Button(
             (menu_button_x, menu_button_y, menu_button_width, menu_button_height),
-            "Start Simulation",
+            "Starta Simulation",
             start_simulation,
         ),
         Button(
@@ -753,12 +753,13 @@ def main():
 
         if state == "menu":
             screen.blit(gradient_bg, (0, 0))
-            title_surf = title_font.render("Omloppsbana i realtid", True, MENU_TITLE_COLOR)
-            subtitle_surf = subtitle_font.render("Välj ett alternativ för att starta", True, MENU_SUBTITLE_COLOR)
+            title_surf = title_font.render("Gymnasiearbete - Simulering av omloppsbana", True, MENU_TITLE_COLOR)
+            # Av Axel Jönsson
+            author_surf = subtitle_font.render("Av Axel Jönsson", True, MENU_SUBTITLE_COLOR)
             title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 150))
-            subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
+            author_rect = author_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
             screen.blit(title_surf, title_rect)
-            screen.blit(subtitle_surf, subtitle_rect)
+            screen.blit(author_surf, author_rect)   
 
             menu_mouse_pos = pygame.mouse.get_pos()
             for btn in menu_buttons:
