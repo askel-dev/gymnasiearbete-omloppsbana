@@ -398,6 +398,57 @@ EARTH_RADIUS = 6_371_000      # m
 R0 = np.array([7_000_000.0, 0.0])  # m
 V0 = np.array([0.0, 7_600.0])      # m/s
 
+
+@dataclass(frozen=True)
+class Scenario:
+    """Preset initial-conditions used by the Scenario Mode."""
+
+    key: str
+    name: str
+    velocity: tuple[float, float]
+    description: str
+
+    def velocity_vector(self) -> np.ndarray:
+        return np.array(self.velocity, dtype=float)
+
+
+SCENARIO_DEFINITIONS: tuple[Scenario, ...] = (
+    Scenario(
+        key="leo",
+        name="LEO",
+        velocity=(0.0, 7_600.0),
+        description="Classic circular low Earth orbit (~7.6 km/s prograde).",
+    ),
+    Scenario(
+        key="suborbital",
+        name="Suborbital",
+        velocity=(0.0, 6_000.0),
+        description="Too slow for orbit – dramatic re-entry arc (~6.0 km/s).",
+    ),
+    Scenario(
+        key="escape",
+        name="Escape",
+        velocity=(0.0, 11_500.0),
+        description="High-energy burn that easily exceeds escape velocity (~11.5 km/s).",
+    ),
+    Scenario(
+        key="parabolic",
+        name="Parabolic",
+        velocity=(0.0, 10_670.0),
+        description="Exactly on the escape threshold (~10.7 km/s).",
+    ),
+    Scenario(
+        key="retrograde",
+        name="Retrograde",
+        velocity=(0.0, -7_600.0),
+        description="Same magnitude as LEO but flipped for retrograde flight.",
+    ),
+)
+
+SCENARIOS: dict[str, Scenario] = {scenario.key: scenario for scenario in SCENARIO_DEFINITIONS}
+SCENARIO_DISPLAY_ORDER: list[str] = [scenario.key for scenario in SCENARIO_DEFINITIONS]
+DEFAULT_SCENARIO_KEY = SCENARIO_DISPLAY_ORDER[0]
+
 # =======================
 #   SIMULATOR-SETTINGS
 # =======================
@@ -690,6 +741,7 @@ def main():
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 18)
+    scenario_font = pygame.font.SysFont("consolas", 16)
 
     min_dimension = min(WIDTH, HEIGHT)
     title_font_size = max(48, int(min_dimension * 0.075))
@@ -732,6 +784,52 @@ def main():
         except pygame.error:
             menu_planet_image = None
 
+    current_scenario_key = DEFAULT_SCENARIO_KEY
+    scenario_flash_text: str | None = None
+    scenario_flash_time = 0.0
+
+    scenario_shortcut_map: dict[int, str] = {}
+    number_key_codes = [
+        pygame.K_1,
+        pygame.K_2,
+        pygame.K_3,
+        pygame.K_4,
+        pygame.K_5,
+        pygame.K_6,
+        pygame.K_7,
+        pygame.K_8,
+        pygame.K_9,
+    ]
+    keypad_key_codes = [
+        pygame.K_KP1,
+        pygame.K_KP2,
+        pygame.K_KP3,
+        pygame.K_KP4,
+        pygame.K_KP5,
+        pygame.K_KP6,
+        pygame.K_KP7,
+        pygame.K_KP8,
+        pygame.K_KP9,
+    ]
+    for index, scenario_key in enumerate(SCENARIO_DISPLAY_ORDER, start=1):
+        if index <= len(number_key_codes):
+            scenario_shortcut_map[number_key_codes[index - 1]] = scenario_key
+        if index <= len(keypad_key_codes):
+            scenario_shortcut_map[keypad_key_codes[index - 1]] = scenario_key
+
+    scenario_panel_title = "Scenario Mode – press 1-5 to switch"
+    scenario_help_lines = [
+        f"[{idx}] {SCENARIOS[key].name} – {SCENARIOS[key].description}"
+        for idx, key in enumerate(SCENARIO_DISPLAY_ORDER, start=1)
+    ]
+
+    def get_current_scenario() -> Scenario:
+        return SCENARIOS[current_scenario_key]
+
+    def scenario_velocity_vector(key: str | None = None) -> np.ndarray:
+        scenario = SCENARIOS[key or current_scenario_key]
+        return scenario.velocity_vector()
+
     global STARFIELD
     if not STARFIELD:
         STARFIELD = generate_starfield(220)
@@ -753,7 +851,7 @@ def main():
 
     # Simuleringsstate
     r = R0.copy()
-    v = V0.copy()
+    v = scenario_velocity_vector()
     t_sim = 0.0
     paused = False
     ppm = PIXELS_PER_METER
@@ -798,7 +896,7 @@ def main():
         nonlocal orbit_prediction_period, orbit_prediction_points
         close_logger()
         r = R0.copy()
-        v = V0.copy()
+        v = scenario_velocity_vector()
         t_sim = 0.0
         paused = False
         ppm = PIXELS_PER_METER
@@ -821,6 +919,18 @@ def main():
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
+
+    def set_scenario(new_key: str) -> None:
+        nonlocal current_scenario_key, scenario_flash_text, scenario_flash_time
+        if new_key not in SCENARIOS:
+            return
+        current_scenario_key = new_key
+        scenario = get_current_scenario()
+        scenario_flash_text = f"{scenario.name} scenario loaded"
+        scenario_flash_time = time.perf_counter()
+        reset()
+        if state == "running":
+            init_run_logging()
 
     def log_state(dt_eff: float) -> None:
         if logger is None:
@@ -851,10 +961,15 @@ def main():
         nonlocal logger, log_step_counter, prev_r, prev_dr, impact_logged, escape_logged
         close_logger()
         logger = RunLogger()
+        scenario = get_current_scenario()
+        v0_vector = scenario.velocity_vector()
         meta = {
+            "scenario_key": scenario.key,
+            "scenario_name": scenario.name,
+            "scenario_description": scenario.description,
             "R0": R0.tolist(),
-            "V0": V0.tolist(),
-            "v0": float(np.linalg.norm(V0)),
+            "V0": v0_vector.tolist(),
+            "v0": float(np.linalg.norm(v0_vector)),
             "G": G,
             "M": M,
             "mu": MU,
@@ -985,6 +1100,10 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     quit_app()
+                    continue
+                if event.key in scenario_shortcut_map:
+                    set_scenario(scenario_shortcut_map[event.key])
+                    continue
                 if state == "running":
                     if event.key == pygame.K_SPACE:
                         paused = not paused
@@ -1071,6 +1190,38 @@ def main():
 
             for btn in menu_buttons:
                 btn.draw(screen, menu_button_font, menu_mouse_pos)
+
+            panel_lines = [scenario_panel_title, *scenario_help_lines]
+            if panel_lines:
+                panel_padding = 14
+                line_height = scenario_font.get_linesize()
+                panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
+                panel_height = line_height * len(panel_lines) + panel_padding * 2
+                panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+                pygame.draw.rect(
+                    panel_surface,
+                    LABEL_BACKGROUND_COLOR,
+                    panel_surface.get_rect(),
+                    border_radius=12,
+                )
+                y = panel_padding
+                for idx, line in enumerate(panel_lines):
+                    if idx == 0:
+                        color = HUD_TEXT_COLOR
+                    else:
+                        scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
+                        color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                    text_surf = scenario_font.render(line, True, color)
+                    panel_surface.blit(text_surf, (panel_padding, y))
+                    y += line_height
+                panel_rect = panel_surface.get_rect()
+                panel_rect.topleft = (20, HEIGHT - panel_height - 20)
+                screen.blit(panel_surface, panel_rect)
+
+            if scenario_flash_text and now_menu - scenario_flash_time < 2.5:
+                flash_surf = scenario_font.render(scenario_flash_text, True, MENU_TITLE_COLOR)
+                flash_rect = flash_surf.get_rect(center=(WIDTH // 2, menu_button_y - 40))
+                screen.blit(flash_surf, flash_rect)
 
             # --- FPS Counter ---
             fps_value = clock.get_fps()
@@ -1301,7 +1452,9 @@ def main():
         eps = energy_specific(r, v)
         e = eccentricity(r, v)
         altitude_km = (rmag - EARTH_RADIUS) / 1_000.0
+        scenario = get_current_scenario()
         hud_lines = [
+            f"Scenario: {scenario.name}",
             f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}",
             f"alt {altitude_km:,.1f} km",
             f"|v| {vmag:,.1f} m/s   e {e:.3f}",
@@ -1331,6 +1484,38 @@ def main():
 
         for btn in sim_buttons:
             btn.draw(screen, font, mouse_pos)
+
+        panel_lines = [scenario_panel_title, *scenario_help_lines]
+        if panel_lines:
+            panel_padding = 14
+            line_height = scenario_font.get_linesize()
+            panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
+            panel_height = line_height * len(panel_lines) + panel_padding * 2
+            panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+            pygame.draw.rect(
+                panel_surface,
+                LABEL_BACKGROUND_COLOR,
+                panel_surface.get_rect(),
+                border_radius=12,
+            )
+            y = panel_padding
+            for idx, line in enumerate(panel_lines):
+                if idx == 0:
+                    color = HUD_TEXT_COLOR
+                else:
+                    scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
+                    color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                text_surf = scenario_font.render(line, True, color)
+                panel_surface.blit(text_surf, (panel_padding, y))
+                y += line_height
+            panel_rect = panel_surface.get_rect()
+            panel_rect.topleft = (20, HEIGHT - panel_height - 20)
+            screen.blit(panel_surface, panel_rect)
+
+        if scenario_flash_text and now_time - scenario_flash_time < 2.5:
+            flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
+            flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
+            screen.blit(flash_surf, flash_rect)
 
         fps_value = clock.get_fps()
         fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
