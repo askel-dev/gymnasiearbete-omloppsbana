@@ -169,6 +169,7 @@ TRAIL_COLOR = (140, 240, 200)
 TRAIL_COLOR_ALPHA = (140, 240, 200, 220)
 HUD_TEXT_COLOR = (245, 245, 245)
 HUD_SHADOW_COLOR = (0, 0, 0, 160)
+PREDICTION_COLOR = (120, 180, 255)
 VEL_COLOR = (255, 120, 120)
 BUTTON_COLOR = (35, 55, 90)
 BUTTON_HOVER_COLOR = (70, 110, 160)
@@ -220,6 +221,26 @@ def world_to_screen(x, y, ppm, camera_center=(0.0, 0.0)):
 
 def clamp(val, lo, hi):
     return max(lo, min(hi, val))
+
+
+def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[float | None, list[tuple[float, float]]]:
+    eps = energy_specific(r_init, v_init)
+    if eps >= 0.0:
+        return None, []
+
+    a = -MU / (2.0 * eps)
+    period = 2.0 * math.pi * math.sqrt(a**3 / MU)
+    num_samples = max(360, int(period / DT_PHYS))
+    dt = period / num_samples
+
+    r = r_init.copy()
+    v = v_init.copy()
+    points: list[tuple[float, float]] = []
+    for _ in range(num_samples + 1):
+        points.append((float(r[0]), float(r[1])))
+        r, v = rk4_step(r, v, dt)
+
+    return period, points
 
 
 class Button:
@@ -280,9 +301,8 @@ def main():
     camera_center = np.array([0.0, 0.0], dtype=float)
     camera_target = np.array([0.0, 0.0], dtype=float)
 
-    vel_vector_scale = 500.0  # endast visuellt
-    arrow_head_length = 20
-    arrow_head_angle = math.radians(28)
+    orbit_prediction_period: float | None = None
+    orbit_prediction_points: list[tuple[float, float]] = []
 
     trail_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     trail_surface.fill((0, 0, 0, 0))
@@ -315,6 +335,7 @@ def main():
         nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
         nonlocal impact_logged, escape_logged, ppm_target
         nonlocal trail_prev_screen_pos, trail_last_ppm, trail_last_camera, camera_center, orbit_markers, camera_target
+        nonlocal orbit_prediction_period, orbit_prediction_points
         close_logger()
         r = R0.copy()
         v = V0.copy()
@@ -337,6 +358,7 @@ def main():
         camera_center[:] = (0.0, 0.0)
         camera_target[:] = (0.0, 0.0)
         trail_last_camera = camera_center.copy()
+        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
@@ -645,6 +667,23 @@ def main():
         earth_px = max(2, int(EARTH_RADIUS * ppm))
         draw_earth(screen, earth_screen_pos, earth_px)
 
+        if orbit_prediction_points:
+            if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
+                reveal_fraction = 1.0
+            else:
+                reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
+            if reveal_fraction >= 1.0:
+                partial_points = orbit_prediction_points
+            else:
+                max_index = int(len(orbit_prediction_points) * reveal_fraction)
+                partial_points = orbit_prediction_points[:max_index]
+            if len(partial_points) >= 2:
+                screen_points = [
+                    world_to_screen(px, py, ppm, tuple(camera_center))
+                    for px, py in partial_points
+                ]
+                pygame.draw.lines(screen, PREDICTION_COLOR, False, screen_points, 2)
+
         # Spår
         if show_trail:
             camera_delta = np.linalg.norm(camera_center - trail_last_camera)
@@ -676,19 +715,16 @@ def main():
             pygame.draw.circle(screen, color, marker_pos, 6)
             pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
 
-        # Hastighetsvektor (visuell)
-        vx, vy = v
-        v_end = world_to_screen(r[0] + vx*vel_vector_scale, r[1] + vy*vel_vector_scale, ppm, tuple(camera_center))
-        draw_velocity_arrow(screen, sat_pos, v_end, arrow_head_length, arrow_head_angle)
-
         # HUD
         rmag = np.linalg.norm(r)
         vmag = np.linalg.norm(v)
         eps = energy_specific(r, v)
         e = eccentricity(r, v)
+        vx, vy = v
         hud_lines = [
             f"t = {t_sim:,.0f} s    (speed: {real_time_speed:.2f}x)",
             f"|r| = {rmag/1e6:.2f} Mm    |v| = {vmag:,.1f} m/s",
+            f"v_x = {vx: .1f} m/s    v_y = {vy: .1f} m/s",
             f"energy = {eps: .3e} J/kg    e = {e:.4f}",
             "SPACE: paus | R: reset | T: trail | +/-: zoom | C: kamera",
             "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
