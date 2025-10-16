@@ -433,8 +433,8 @@ SCENARIO_DEFINITIONS: tuple[Scenario, ...] = (
     Scenario(
         key="parabolic",
         name="Parabolic",
-        velocity=(0.0, 10_670.0),
-        description="Exactly on the escape threshold (~10.7 km/s).",
+        velocity=(0.0, 10_000.0),
+        description="Close to the escape threshold (~10.0 km/s).",
     ),
     Scenario(
         key="retrograde",
