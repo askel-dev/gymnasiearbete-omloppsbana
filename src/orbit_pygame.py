@@ -11,6 +11,7 @@ import numpy as np
 from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import islice
 
 from logging_utils import RunLogger
 
@@ -405,6 +406,8 @@ REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
 LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
 ESCAPE_RADIUS_FACTOR = 20.0
+ORBIT_PREDICTION_INTERVAL = 1.0
+MAX_ORBIT_PREDICTION_SAMPLES = 2_000
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
@@ -547,7 +550,8 @@ def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[fl
 
     a = -MU / (2.0 * eps)
     period = 2.0 * math.pi * math.sqrt(a**3 / MU)
-    num_samples = max(360, int(period / DT_PHYS))
+    estimated_samples = max(360, int(period / ORBIT_PREDICTION_INTERVAL))
+    num_samples = max(2, min(MAX_ORBIT_PREDICTION_SAMPLES, estimated_samples))
     dt = period / num_samples
 
     r = r_init.copy()
@@ -1189,15 +1193,15 @@ def main():
             else:
                 reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
             if reveal_fraction >= 1.0:
-                partial_points = orbit_prediction_points
+                points_iter = orbit_prediction_points
             else:
                 max_index = int(len(orbit_prediction_points) * reveal_fraction)
-                partial_points = orbit_prediction_points[:max_index]
-            if len(partial_points) >= 2:
-                screen_points = [
-                    world_to_screen(px, py, ppm, camera_center_tuple)
-                    for px, py in partial_points
-                ]
+                points_iter = islice(orbit_prediction_points, max_index)
+            screen_points = [
+                world_to_screen(px, py, ppm, camera_center_tuple)
+                for px, py in points_iter
+            ]
+            if len(screen_points) >= 2:
                 draw_orbit_line(screen, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
 
         earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
