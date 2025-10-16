@@ -347,10 +347,12 @@ ORBIT_LINE_WIDTH = 2
 TRAIL_COLOR = (46, 209, 195)
 TRAIL_MAX_DURATION = 1.0
 VEL_COLOR = (46, 209, 195)
-BUTTON_COLOR = (16, 24, 38, int(255 * 0.6))
-BUTTON_HOVER_COLOR = (28, 44, 66, int(255 * 0.68))
+BUTTON_COLOR = (8, 32, 64, int(255 * 0.78))
+BUTTON_HOVER_COLOR = (18, 52, 94, int(255 * 0.88))
 BUTTON_TEXT_COLOR = (234, 241, 255)
-BUTTON_RADIUS = 12
+BUTTON_BORDER_COLOR = (88, 140, 255, int(255 * 0.55))
+BUTTON_HOVER_BORDER_COLOR = (118, 180, 255, int(255 * 0.8))
+BUTTON_RADIUS = 18
 MENU_TITLE_COLOR = (234, 241, 255)
 MENU_SUBTITLE_COLOR = (180, 198, 228)
 MENU_BUTTON_COLOR = (9, 44, 92, 220)
@@ -371,6 +373,10 @@ FPS_TEXT_ALPHA = int(255 * 0.6)
 STARFIELD_PARALLAX = 0.12
 
 STARFIELD: list[dict[str, object]] = []
+MENU_PLANET_IMAGE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "assets", "menu_planet.png"
+)
+_MENU_PLANET_CACHE: dict[tuple[int, int], pygame.Surface] = {}
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
     return 0.25 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
