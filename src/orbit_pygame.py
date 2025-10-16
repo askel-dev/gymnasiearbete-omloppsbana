@@ -278,6 +278,8 @@ def main():
     pygame.init()
     pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    earth_img = pygame.image.load("assets/earth_sprite.png").convert_alpha()
+    earth_rect = earth_img.get_rect()
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 20)
     title_font = pygame.font.SysFont("consolas", 40, bold=True)
@@ -662,10 +664,28 @@ def main():
         screen.blit(gradient_bg, (0, 0))
         draw_starfield(screen, camera_center, ppm)
 
-        # Jorden
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, tuple(camera_center))
-        earth_px = max(2, int(EARTH_RADIUS * ppm))
-        draw_earth(screen, earth_screen_pos, earth_px)
+        # Jorden med sprite
+        earth_screen_pos = world_to_screen(0.0, 0.0, ppm)
+
+        # Skala bilden beroende på zoomnivå
+        scale_factor = EARTH_RADIUS * ppm * 2 / earth_img.get_width()
+        scaled_size = (
+            int(earth_img.get_width() * scale_factor),
+            int(earth_img.get_height() * scale_factor),
+        )
+        earth_scaled = pygame.transform.smoothscale(earth_img, scaled_size)
+
+        glow_radius = int(EARTH_RADIUS * ppm * 1.5)
+        glow_color = (80, 180, 255, 40)
+        glow_surface = pygame.Surface((glow_radius*2, glow_radius*2), pygame.SRCALPHA)
+        pygame.draw.circle(glow_surface, glow_color, (glow_radius, glow_radius), glow_radius)
+        screen.blit(glow_surface, (earth_screen_pos[0]-glow_radius, earth_screen_pos[1]-glow_radius))
+
+
+        # Centrera bilden runt origo
+        rect = earth_scaled.get_rect(center=earth_screen_pos)
+        screen.blit(earth_scaled, rect)
+
 
         if orbit_prediction_points:
             if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
