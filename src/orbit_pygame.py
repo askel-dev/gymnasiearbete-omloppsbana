@@ -165,6 +165,46 @@ def draw_satellite(
     surface.blit(sat_surface, sat_rect)
 
 
+def draw_marker_pin(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    *,
+    color: tuple[int, int, int],
+    alpha: int,
+    orientation: str,
+) -> None:
+    if alpha <= 0:
+        return
+
+    half_width = LABEL_MARKER_PIN_WIDTH // 2
+    offset = LABEL_MARKER_PIN_OFFSET
+    height = LABEL_MARKER_PIN_HEIGHT
+
+    if orientation == "pericenter":
+        base_y = position[1] + offset
+        tip = (position[0], position[1] + height)
+    else:
+        base_y = position[1] - offset
+        tip = (position[0], position[1] - height)
+
+    base_left = (position[0] - half_width, base_y)
+    base_right = (position[0] + half_width, base_y)
+
+    pygame.draw.polygon(
+        surface,
+        (*color, alpha),
+        [base_left, base_right, tip],
+    )
+
+    pygame.draw.line(
+        surface,
+        (*color, min(255, int(alpha * 0.95))),
+        position,
+        tip,
+        2,
+    )
+
+
 def draw_menu_planet(
     surface: pygame.Surface,
     center: tuple[int, int],
@@ -514,6 +554,9 @@ LABEL_MARKER_ALPHA = int(255 * 0.9)
 LABEL_MARKER_HOVER_RADIUS = 22
 LABEL_MARKER_HOVER_ALPHA = 255
 LABEL_MARKER_HOVER_RADIUS_PIXELS = 6
+LABEL_MARKER_PIN_WIDTH = 10
+LABEL_MARKER_PIN_HEIGHT = 16
+LABEL_MARKER_PIN_OFFSET = 6
 FPS_TEXT_ALPHA = int(255 * 0.6)
 STARFIELD_PARALLAX = 0.12
 
@@ -1065,6 +1108,21 @@ def main():
         if state == "running":
             init_run_logging()
 
+    sim_buttons: list[Button] = []
+
+    def update_sim_button_layout() -> None:
+        if not sim_buttons:
+            return
+
+        total_buttons = len(sim_buttons)
+        total_height = total_buttons * button_height + (total_buttons - 1) * button_gap
+        start_y = int((HEIGHT - total_height) / 2)
+        x_pos = WIDTH - button_width - 20
+
+        for idx, btn in enumerate(sim_buttons):
+            top = start_y + idx * (button_height + button_gap)
+            btn.rect.update(x_pos, top, button_width, button_height)
+
     sim_buttons = [
         Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if paused else "Pause"),
         Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset_and_continue),
@@ -1090,6 +1148,8 @@ def main():
         ),
     ]
 
+    update_sim_button_layout()
+
     def is_over_button(pos: tuple[int, int]) -> bool:
         if state == "menu":
             return any(btn.rect.collidepoint(pos) for btn in menu_buttons)
@@ -1103,6 +1163,7 @@ def main():
         if current_size != overlay_size:
             overlay_size = current_size
             update_display_metrics(*current_size)
+            update_sim_button_layout()
             trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
             orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
             label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
@@ -1434,6 +1495,13 @@ def main():
                 hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
                 alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
                 radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
+                draw_marker_pin(
+                    label_layer,
+                    marker_pos,
+                    color=LABEL_MARKER_COLOR,
+                    alpha=alpha,
+                    orientation=marker_type,
+                )
                 pygame.draw.circle(
                     label_layer,
                     (*LABEL_MARKER_COLOR, alpha),
