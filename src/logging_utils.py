@@ -52,7 +52,22 @@ class RunLogger:
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_id = run_id or f"{timestamp}_run"
+
+        def make_candidate(suffix: Optional[int] = None) -> str:
+            base = run_id or f"{timestamp}_run"
+            if suffix is None:
+                return base
+            if run_id:
+                return f"{run_id}_{suffix}"
+            return f"{base}_{suffix:02d}"
+
+        candidate_id = make_candidate()
+        suffix = 1
+        while (self.root_dir / candidate_id).exists():
+            candidate_id = make_candidate(suffix)
+            suffix += 1
+
+        self.run_id = candidate_id
         self.run_dir = self.root_dir / self.run_id
         self.run_dir.mkdir(parents=True, exist_ok=False)
 
