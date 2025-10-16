@@ -11,7 +11,6 @@ import numpy as np
 from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
-from itertools import islice
 
 from logging_utils import RunLogger
 
@@ -448,6 +447,7 @@ SCENARIO_DEFINITIONS: tuple[Scenario, ...] = (
 SCENARIOS: dict[str, Scenario] = {scenario.key: scenario for scenario in SCENARIO_DEFINITIONS}
 SCENARIO_DISPLAY_ORDER: list[str] = [scenario.key for scenario in SCENARIO_DEFINITIONS]
 DEFAULT_SCENARIO_KEY = SCENARIO_DISPLAY_ORDER[0]
+SCENARIO_FLASH_DURATION = 2.0
 
 # =======================
 #   SIMULATOR-SETTINGS
@@ -459,6 +459,7 @@ LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
 ESCAPE_RADIUS_FACTOR = 20.0
 ORBIT_PREDICTION_INTERVAL = 1.0
 MAX_ORBIT_PREDICTION_SAMPLES = 2_000
+MAX_RENDERED_ORBIT_POINTS = 800
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
@@ -482,8 +483,8 @@ SAT_BASE_RADIUS = 6
 HUD_TEXT_COLOR = (234, 241, 255)
 HUD_TEXT_ALPHA = 255
 HUD_SHADOW_COLOR = (10, 15, 30, 120)
-ORBIT_PRIMARY_COLOR = (46, 209, 195)
-ORBIT_SECONDARY_COLOR = (46, 209, 195, 160)
+ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
+ORBIT_SECONDARY_COLOR = (220, 236, 255, 140)
 ORBIT_LINE_WIDTH = 2
 TRAIL_COLOR = (46, 209, 195)
 TRAIL_MAX_DURATION = 1.0
@@ -510,6 +511,9 @@ LABEL_BACKGROUND_COLOR = (12, 18, 30, int(255 * 0.18))
 LABEL_MARKER_COLOR = (46, 209, 195)
 LABEL_TEXT_COLOR = (234, 241, 255)
 LABEL_MARKER_ALPHA = int(255 * 0.9)
+LABEL_MARKER_HOVER_RADIUS = 22
+LABEL_MARKER_HOVER_ALPHA = 255
+LABEL_MARKER_HOVER_RADIUS_PIXELS = 6
 FPS_TEXT_ALPHA = int(255 * 0.6)
 STARFIELD_PARALLAX = 0.12
 
@@ -592,6 +596,18 @@ def draw_orbit_line(
     else:
         pygame.draw.lines(surface, color, False, points, width)
         pygame.draw.aalines(surface, color, False, points)
+
+
+def downsample_points(
+    points: list[tuple[float, float]], max_points: int
+) -> list[tuple[float, float]]:
+    if len(points) <= max_points:
+        return list(points)
+    step = max(1, math.ceil(len(points) / max_points))
+    sampled = points[::step]
+    if sampled[-1] != points[-1]:
+        sampled.append(points[-1])
+    return sampled
 
 
 def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[float | None, list[tuple[float, float]]]:
@@ -737,6 +753,7 @@ def main():
 
     overlay_size = (WIDTH, HEIGHT)
     trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+    orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
     label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
     clock = pygame.time.Clock()
@@ -1087,11 +1104,14 @@ def main():
             overlay_size = current_size
             update_display_metrics(*current_size)
             trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+            orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
             label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
         trail_surface.fill((0, 0, 0, 0))
+        orbit_layer.fill((0, 0, 0, 0))
         label_layer.fill((0, 0, 0, 0))
         trail_drawn = False
+        orbit_drawn = False
         labels_drawn = False
         # --- Input ---
         for event in pygame.event.get():
@@ -1218,7 +1238,7 @@ def main():
                 panel_rect.topleft = (20, HEIGHT - panel_height - 20)
                 screen.blit(panel_surface, panel_rect)
 
-            if scenario_flash_text and now_menu - scenario_flash_time < 2.5:
+            if scenario_flash_text and now_menu - scenario_flash_time < SCENARIO_FLASH_DURATION:
                 flash_surf = scenario_font.render(scenario_flash_text, True, MENU_TITLE_COLOR)
                 flash_rect = flash_surf.get_rect(center=(WIDTH // 2, menu_button_y - 40))
                 screen.blit(flash_surf, flash_rect)
@@ -1358,17 +1378,23 @@ def main():
                 reveal_fraction = 1.0
             else:
                 reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
+            total_points = len(orbit_prediction_points)
             if reveal_fraction >= 1.0:
-                points_iter = orbit_prediction_points
+                subset = orbit_prediction_points
             else:
-                max_index = int(len(orbit_prediction_points) * reveal_fraction)
-                points_iter = islice(orbit_prediction_points, max_index)
+                max_index = max(2, int(total_points * reveal_fraction))
+                subset = orbit_prediction_points[:max_index]
+            sampled_points = downsample_points(subset, MAX_RENDERED_ORBIT_POINTS)
             screen_points = [
                 world_to_screen(px, py, ppm, camera_center_tuple)
-                for px, py in points_iter
+                for px, py in sampled_points
             ]
             if len(screen_points) >= 2:
-                draw_orbit_line(screen, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
+                draw_orbit_line(orbit_layer, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
+                orbit_drawn = True
+
+        if orbit_drawn:
+            screen.blit(orbit_layer, (0, 0))
 
         earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
         draw_earth(screen, earth_screen_pos, earth_radius_px)
@@ -1397,53 +1423,72 @@ def main():
         sat_radius_px = compute_satellite_radius(rmag)
         draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
 
+        hovered_marker: tuple[str, tuple[int, int], float] | None = None
+        hovered_distance = float("inf")
         if orbit_markers:
             for marker_type, mx, my, mr in orbit_markers:
                 marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
+                dist_to_mouse = math.hypot(
+                    marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1]
+                )
+                hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
+                alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
+                radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
                 pygame.draw.circle(
                     label_layer,
-                    (*LABEL_MARKER_COLOR, LABEL_MARKER_ALPHA),
+                    (*LABEL_MARKER_COLOR, alpha),
                     marker_pos,
-                    4,
+                    radius,
                 )
+                if hovered:
+                    if dist_to_mouse < hovered_distance:
+                        hovered_distance = dist_to_mouse
+                        hovered_marker = (marker_type, marker_pos, mr)
+                    pygame.draw.circle(
+                        label_layer,
+                        (*LABEL_MARKER_COLOR, int(alpha * 0.4)),
+                        marker_pos,
+                        radius + 4,
+                        1,
+                    )
                 labels_drawn = True
-                distance_px = math.hypot(marker_pos[0] - sat_pos[0], marker_pos[1] - sat_pos[1])
-                if distance_px > 120:
-                    continue
-                label = "Periapsis" if marker_type == "pericenter" else "Apoapsis"
-                altitude_km = (mr - EARTH_RADIUS) / 1_000.0
-                text = f"{label}: {altitude_km:,.1f} km"
-                text_surf = font.render(text, True, LABEL_TEXT_COLOR)
-                if HUD_TEXT_ALPHA < 255:
-                    text_surf.set_alpha(HUD_TEXT_ALPHA)
-                padding = 6
-                bg_rect = pygame.Rect(
-                    0,
-                    0,
-                    text_surf.get_width() + padding * 2,
-                    text_surf.get_height() + padding * 2,
-                )
-                direction = -1 if marker_type == "pericenter" else 1
-                line_length = 18
-                anchor_y = marker_pos[1] + direction * line_length
-                bg_rect.center = (
-                    marker_pos[0],
-                    int(anchor_y + direction * (bg_rect.height / 2 + 6)),
-                )
-                pygame.draw.line(
-                    label_layer,
-                    (*LABEL_MARKER_COLOR, int(LABEL_MARKER_ALPHA * 0.6)),
-                    marker_pos,
-                    (marker_pos[0], anchor_y),
-                    2,
-                )
-                pygame.draw.rect(
-                    label_layer,
-                    LABEL_BACKGROUND_COLOR,
-                    bg_rect,
-                    border_radius=10,
-                )
-                label_layer.blit(text_surf, (bg_rect.left + padding, bg_rect.top + padding))
+
+        if hovered_marker is not None:
+            marker_type, marker_pos, mr = hovered_marker
+            label = "Periapsis" if marker_type == "pericenter" else "Apoapsis"
+            altitude_km = (mr - EARTH_RADIUS) / 1_000.0
+            text = f"{label}: {altitude_km:,.1f} km"
+            text_surf = font.render(text, True, LABEL_TEXT_COLOR)
+            if HUD_TEXT_ALPHA < 255:
+                text_surf.set_alpha(HUD_TEXT_ALPHA)
+            padding = 6
+            bg_rect = pygame.Rect(
+                0,
+                0,
+                text_surf.get_width() + padding * 2,
+                text_surf.get_height() + padding * 2,
+            )
+            direction = -1 if marker_type == "pericenter" else 1
+            line_length = 18
+            anchor_y = marker_pos[1] + direction * line_length
+            bg_rect.center = (
+                marker_pos[0],
+                int(anchor_y + direction * (bg_rect.height / 2 + 6)),
+            )
+            pygame.draw.line(
+                label_layer,
+                (*LABEL_MARKER_COLOR, int(LABEL_MARKER_ALPHA * 0.6)),
+                marker_pos,
+                (marker_pos[0], anchor_y),
+                2,
+            )
+            pygame.draw.rect(
+                label_layer,
+                LABEL_BACKGROUND_COLOR,
+                bg_rect,
+                border_radius=10,
+            )
+            label_layer.blit(text_surf, (bg_rect.left + padding, bg_rect.top + padding))
         if labels_drawn:
             screen.blit(label_layer, (0, 0))
 
@@ -1512,7 +1557,7 @@ def main():
             panel_rect.topleft = (20, HEIGHT - panel_height - 20)
             screen.blit(panel_surface, panel_rect)
 
-        if scenario_flash_text and now_time - scenario_flash_time < 2.5:
+        if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
             flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
             flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
             screen.blit(flash_surf, flash_rect)
