@@ -864,7 +864,7 @@ def main():
                 title_rect = title_surf.get_rect(midtop=(WIDTH // 2, title_top + idx * title_line_height))
                 screen.blit(title_surf, title_rect)
 
-            tagline_text = "En interaktiv visualisering"
+            tagline_text = "Av Axel Jönsson"
             tagline_surf = tagline_font.render(tagline_text, True, MENU_TAGLINE_COLOR)
             tagline_rect = tagline_surf.get_rect(
                 midtop=(WIDTH // 2, title_top + len(title_lines) * title_line_height + 24)
