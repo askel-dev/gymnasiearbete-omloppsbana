@@ -37,34 +37,32 @@ def draw_text_with_shadow(surface: pygame.Surface, font: pygame.font.Font, text:
     surface.blit(text_surf, position)
 
 
-def create_radial_surface(
-    radius: int,
-    inner_color: tuple[int, ...],
-    outer_color: tuple[int, ...],
-) -> pygame.Surface:
-    size = radius * 2
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    cx = cy = radius
-    inner_rgba = list(inner_color) + [255] if len(inner_color) == 3 else list(inner_color)
-    outer_rgba = list(outer_color) + [0] if len(outer_color) == 3 else list(outer_color)
-    for r in range(radius, 0, -1):
-        t = r / radius
-        color = [
-            int(inner_rgba[i] * t + outer_rgba[i] * (1 - t))
-            for i in range(4)
-        ]
-        pygame.draw.circle(surface, color, (cx, cy), r)
-    return surface
-
-
 @lru_cache(maxsize=128)
 def _earth_surface(radius: int) -> pygame.Surface:
-    glow_radius = max(radius + 20, int(radius * 1.4))
-    surface_size = glow_radius * 2
-    surface = pygame.Surface((surface_size, surface_size), pygame.SRCALPHA)
-    glow_surface = create_radial_surface(glow_radius, EARTH_CORE_COLOR + (255,), EARTH_GLOW_COLOR + (0,))
-    surface.blit(glow_surface, (0, 0))
-    pygame.draw.circle(surface, EARTH_CORE_COLOR, (glow_radius, glow_radius), radius)
+    diameter = radius * 2
+    ring_width = max(1, min(3, radius // 6 + 1))
+    padding = ring_width + 3
+    size = diameter + padding * 2
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    center = size // 2
+    if radius <= 0:
+        return surface
+
+    pygame.draw.circle(surface, EARTH_FILL_COLOR, (center, center), radius)
+
+    pygame.draw.circle(surface, EARTH_PRIMARY_RING_COLOR, (center, center), radius, ring_width)
+
+    inner_radius = int(radius * 0.6)
+    inner_ring_width = max(1, ring_width - 1)
+    if inner_radius > inner_ring_width:
+        pygame.draw.circle(
+            surface,
+            EARTH_SECONDARY_RING_COLOR,
+            (center, center),
+            inner_radius,
+            inner_ring_width,
+        )
+
     return surface
 
 
@@ -76,29 +74,10 @@ def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) 
     surface.blit(earth_surface, rect)
 
 
-@lru_cache(maxsize=1)
-def _satellite_surface() -> pygame.Surface:
-    halo_radius = 14
-    surface = pygame.Surface((halo_radius * 2, halo_radius * 2), pygame.SRCALPHA)
-    halo_surface = create_radial_surface(halo_radius, SAT_HALO_COLOR, (0, 0, 0, 0))
-    surface.blit(halo_surface, (0, 0))
-    pygame.draw.circle(surface, SAT_COLOR, (halo_radius, halo_radius), 5)
-    return surface
-
-
 def draw_satellite(surface: pygame.Surface, position: tuple[int, int]) -> None:
-    sat_surface = _satellite_surface()
-    rect = sat_surface.get_rect(center=position)
-    surface.blit(sat_surface, rect)
-
-
-@lru_cache(maxsize=128)
-def get_earth_glow_surface(radius: int) -> pygame.Surface:
-    radius = max(1, radius)
-    size = radius * 2
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    pygame.draw.circle(surface, EARTH_GLOW_OVERLAY_COLOR, (radius, radius), radius)
-    return surface
+    pygame.draw.circle(surface, SAT_COLOR, position, SAT_RADIUS)
+    if SAT_OUTLINE_WIDTH > 0:
+        pygame.draw.circle(surface, SAT_OUTLINE_COLOR, position, SAT_RADIUS, SAT_OUTLINE_WIDTH)
 
 
 def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
@@ -173,10 +152,13 @@ ESCAPE_RADIUS_FACTOR = 20.0
 WIDTH, HEIGHT = 1000, 800
 BG_COLOR_TOP = (5, 10, 25)
 BG_COLOR_BOTTOM = (10, 30, 60)
-EARTH_CORE_COLOR = (70, 170, 255)
-EARTH_GLOW_COLOR = (30, 110, 200)
-SAT_COLOR = (255, 255, 230)
-SAT_HALO_COLOR = (255, 200, 120, 120)
+EARTH_FILL_COLOR = (38, 82, 132)
+EARTH_PRIMARY_RING_COLOR = (120, 190, 255)
+EARTH_SECONDARY_RING_COLOR = (70, 130, 200)
+SAT_COLOR = (240, 245, 255)
+SAT_OUTLINE_COLOR = EARTH_PRIMARY_RING_COLOR
+SAT_RADIUS = 4
+SAT_OUTLINE_WIDTH = 1
 HUD_TEXT_COLOR = (245, 245, 245)
 HUD_SHADOW_COLOR = (0, 0, 0, 160)
 PREDICTION_COLOR = (120, 180, 255)
@@ -188,11 +170,9 @@ MENU_TITLE_COLOR = (220, 230, 255)
 MENU_SUBTITLE_COLOR = (150, 165, 200)
 PERICENTER_COLOR = (255, 180, 120)
 APOCENTER_COLOR = (120, 200, 255)
-
-EARTH_GLOW_OVERLAY_COLOR = (80, 180, 255, 40)
-EARTH_GLOW_CACHE_STEP = 4
-EARTH_SCALE_CACHE_PRECISION = 200
-EARTH_SCALE_CACHE_MAX = 256
+MARKER_OUTLINE_COLOR = (230, 240, 255)
+MARKER_OUTLINE_WIDTH = 1
+ORBIT_LINE_WIDTH = 1
 
 STARFIELD: list[dict[str, float | tuple[int, int]]] = []
 
@@ -343,10 +323,6 @@ def main():
     screen_width, screen_height = screen.get_size()
     update_display_metrics(screen_width, screen_height)
 
-    earth_img = pygame.image.load("assets/earth_sprite.png").convert_alpha()
-    earth_img_width = earth_img.get_width()
-    earth_img_height = earth_img.get_height()
-    earth_scale_cache: dict[int, pygame.Surface] = {}
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 20)
     title_font = pygame.font.SysFont("consolas", 40, bold=True)
@@ -769,7 +745,7 @@ def main():
         camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
         mouse_pos = pygame.mouse.get_pos()
 
-        # Jorden med sprite
+        # Jorden
         earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
 
@@ -781,34 +757,8 @@ def main():
         text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
         screen.blit(fps_text, text_rect)
 
-        # Skala bilden beroende på zoomnivå
-        scale_factor = EARTH_RADIUS * ppm * 2 / earth_img_width
-        scale_key = max(1, int(round(scale_factor * EARTH_SCALE_CACHE_PRECISION)))
-        earth_scaled = earth_scale_cache.get(scale_key)
-        if earth_scaled is None:
-            quantized_scale = scale_key / EARTH_SCALE_CACHE_PRECISION
-            quantized_size = (
-                max(1, int(earth_img_width * quantized_scale)),
-                max(1, int(earth_img_height * quantized_scale)),
-            )
-            earth_scaled = pygame.transform.smoothscale(earth_img, quantized_size)
-            if len(earth_scale_cache) >= EARTH_SCALE_CACHE_MAX:
-                earth_scale_cache.clear()
-            earth_scale_cache[scale_key] = earth_scaled
-
-        glow_radius = int(EARTH_RADIUS * ppm * 1.5)
-        if glow_radius > 0:
-            glow_radius = max(
-                EARTH_GLOW_CACHE_STEP,
-                (glow_radius + EARTH_GLOW_CACHE_STEP - 1) // EARTH_GLOW_CACHE_STEP * EARTH_GLOW_CACHE_STEP,
-            )
-            glow_surface = get_earth_glow_surface(glow_radius)
-            screen.blit(glow_surface, (earth_screen_pos[0]-glow_radius, earth_screen_pos[1]-glow_radius))
-
-
-        # Centrera bilden runt origo
-        rect = earth_scaled.get_rect(center=earth_screen_pos)
-        screen.blit(earth_scaled, rect)
+        earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
+        draw_earth(screen, earth_screen_pos, earth_radius_px)
 
 
         if orbit_prediction_points:
@@ -826,7 +776,7 @@ def main():
                     world_to_screen(px, py, ppm, camera_center_tuple)
                     for px, py in partial_points
                 ]
-                pygame.draw.lines(screen, PREDICTION_COLOR, False, screen_points, 2)
+                pygame.draw.lines(screen, PREDICTION_COLOR, False, screen_points, ORBIT_LINE_WIDTH)
 
         # Satellit
         sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
@@ -836,7 +786,14 @@ def main():
             marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
             color = PERICENTER_COLOR if marker_type == "pericenter" else APOCENTER_COLOR
             pygame.draw.circle(screen, color, marker_pos, 6)
-            pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
+            if MARKER_OUTLINE_WIDTH > 0:
+                pygame.draw.circle(
+                    screen,
+                    MARKER_OUTLINE_COLOR,
+                    marker_pos,
+                    6,
+                    MARKER_OUTLINE_WIDTH,
+                )
             label = "Periapsis" if marker_type == "pericenter" else "Apoapsis"
             altitude_km = (mr - EARTH_RADIUS) / 1_000.0
             text = f"{label}: {altitude_km:,.1f} km alt"
