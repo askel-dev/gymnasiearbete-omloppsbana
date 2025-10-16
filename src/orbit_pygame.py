@@ -10,16 +10,6 @@ import numpy as np
 from collections import deque
 from functools import lru_cache
 
-try:
-    import psyco
-
-    if hasattr(psyco, "full"):
-        psyco.full()
-    else:  # pragma: no cover - psyco may be a stub without full()
-        psyco = None
-except ImportError:  # pragma: no cover - psyco is optional
-    psyco = None
-
 from logging_utils import RunLogger
 
 
