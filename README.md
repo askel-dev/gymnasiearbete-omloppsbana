@@ -5,7 +5,7 @@ Interaktiv RK4-simulator för omloppsbanor med inbyggd datalogging, analys och p
 ## Förutsättningar
 
 * Python 3.10+
-* `pygame`, `numpy`, `matplotlib`
+* `pygame`, `numpy`, `matplotlib`, `psyco`
 
 Installera beroenden via pip om de saknas:
 
