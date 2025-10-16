@@ -1,4 +1,4 @@
-# src/orbit_pygame.py
+﻿# src/orbit_pygame.py
 import json
 import math
 import os
@@ -632,9 +632,9 @@ def main():
 
     title_font = load_font(["montserrat", "futura", "avenir", "arial"], title_font_size, bold=True)
     subtitle_font = load_font(["montserrat", "futura", "avenir", "arial"], subtitle_font_size)
-
-    menu_planet_diameter = max(180, min(320, int(min_dimension * 0.32)))
-    menu_button_height = max(56, int(menu_planet_diameter * 0.26))
+    menu_button_size = max(80, int(min_dimension * 0.08))
+    menu_planet_diameter = max(700, min(320, int(min_dimension * 0.32)))
+    menu_button_height = max(120, int(menu_button_size * 0.26))
     menu_button_font_size = min(menu_button_height - 12, max(26, int(menu_button_height * 0.52)))
     menu_button_font = load_font(
         ["montserrat", "futura", "avenir", "arial"],
@@ -643,7 +643,7 @@ def main():
     )
 
     assets_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets"))
-    planet_image_path = os.path.join(assets_root, "menu_planet.png")
+    planet_image_path = os.path.join(assets_root, "main_menu_art.png")
     menu_planet_image: pygame.Surface | None = None
     if os.path.exists(planet_image_path):
         try:
@@ -659,7 +659,7 @@ def main():
     title_y = max(int(layout_center_y - HEIGHT * 0.27), int(HEIGHT * 0.14))
     subtitle_y = title_y + max(40, int(HEIGHT * 0.06))
     planet_center = (WIDTH // 2, layout_center_y - int(HEIGHT * 0.03))
-    menu_button_width = max(280, min(440, int(WIDTH * 0.35)))
+    menu_button_width = max(200, int(menu_button_height * 6))
     menu_button_gap = max(20, int(menu_button_height * 0.36))
     button_block_height = menu_button_height * 2 + menu_button_gap
     default_button_y = planet_center[1] + menu_planet_diameter // 2 + max(48, int(HEIGHT * 0.07))
@@ -668,7 +668,7 @@ def main():
     menu_button_y = max(menu_button_y, subtitle_y + max(60, int(HEIGHT * 0.08)))
     menu_button_x = WIDTH // 2 - menu_button_width // 2
     menu_title_text = "SIMULERING AV OMLOPPSBANA"
-    menu_subtitle_text = "En interaktiv visualisering"
+    menu_subtitle_text = "av Axel Jönsson"
 
     # Simuleringsstate
     r = R0.copy()
