@@ -714,7 +714,7 @@ def main():
         draw_starfield(screen, camera_center, ppm)
 
         # Jorden med sprite
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm)
+        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, tuple(camera_center))
 
         # Skala bilden beroende på zoomnivå
         scale_factor = EARTH_RADIUS * ppm * 2 / earth_img.get_width()
