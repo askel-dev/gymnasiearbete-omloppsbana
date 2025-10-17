@@ -1,18 +1,26 @@
-# src/orbit_pygame.py
+﻿# src/orbit_pygame.py
 import json
 import math
+import os
 import random
 import time
 import pygame
+from pygame.locals import *  # noqa: F401,F403 - required for constants such as FULLSCREEN
 import sys
 import numpy as np
 from collections import deque
+from dataclasses import dataclass
 from functools import lru_cache
 
 from logging_utils import RunLogger
 
 
-def create_vertical_gradient(width: int, height: int, top_color: tuple[int, int, int], bottom_color: tuple[int, int, int]) -> pygame.Surface:
+def create_vertical_gradient(
+    width: int,
+    height: int,
+    top_color: tuple[int, int, int],
+    bottom_color: tuple[int, int, int],
+) -> pygame.Surface:
     surface = pygame.Surface((width, height))
     for y in range(height):
         ratio = y / max(1, height - 1)
@@ -24,35 +32,29 @@ def create_vertical_gradient(width: int, height: int, top_color: tuple[int, int,
     return surface.convert()
 
 
-def draw_text_with_shadow(surface: pygame.Surface, font: pygame.font.Font, text: str, position: tuple[int, int]) -> None:
-    shadow_color = HUD_SHADOW_COLOR[:3]
-    shadow_surf = font.render(text, True, shadow_color)
-    if len(HUD_SHADOW_COLOR) == 4:
-        shadow_surf.set_alpha(HUD_SHADOW_COLOR[3])
+def draw_text_with_shadow(
+    surface: pygame.Surface,
+    font: pygame.font.Font,
+    text: str,
+    position: tuple[int, int],
+    *,
+    shadow: bool = False,
+) -> None:
     text_surf = font.render(text, True, HUD_TEXT_COLOR)
-    x, y = position
-    surface.blit(shadow_surf, (x + 2, y + 2))
+    if HUD_TEXT_ALPHA < 255:
+        text_surf.set_alpha(HUD_TEXT_ALPHA)
+    if shadow:
+        shadow_color = HUD_SHADOW_COLOR[:3]
+        shadow_surf = font.render(text, True, shadow_color)
+        if len(HUD_SHADOW_COLOR) == 4:
+            shadow_surf.set_alpha(HUD_SHADOW_COLOR[3])
+        x, y = position
+        surface.blit(shadow_surf, (x + 1, y + 1))
     surface.blit(text_surf, position)
 
 
-def create_radial_surface(
-    radius: int,
-    inner_color: tuple[int, ...],
-    outer_color: tuple[int, ...],
-) -> pygame.Surface:
-    size = radius * 2
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    cx = cy = radius
-    inner_rgba = list(inner_color) + [255] if len(inner_color) == 3 else list(inner_color)
-    outer_rgba = list(outer_color) + [0] if len(outer_color) == 3 else list(outer_color)
-    for r in range(radius, 0, -1):
-        t = r / radius
-        color = [
-            int(inner_rgba[i] * t + outer_rgba[i] * (1 - t))
-            for i in range(4)
-        ]
-        pygame.draw.circle(surface, color, (cx, cy), r)
-    return surface
+def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
 
 @lru_cache(maxsize=128)
@@ -86,20 +88,199 @@ def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) 
     surface.blit(earth_surface, rect)
 
 
-@lru_cache(maxsize=1)
-def _satellite_surface() -> pygame.Surface:
-    halo_radius = 14
-    surface = pygame.Surface((halo_radius * 2, halo_radius * 2), pygame.SRCALPHA)
-    halo_surface = create_radial_surface(halo_radius, SAT_HALO_COLOR, (0, 0, 0, 0))
-    surface.blit(halo_surface, (0, 0))
-    pygame.draw.circle(surface, SAT_COLOR, (halo_radius, halo_radius), 5)
-    return surface
+@lru_cache(maxsize=256)
+def _earth_surface(radius: int) -> pygame.Surface:
+    if radius <= 0:
+        return pygame.Surface((1, 1), pygame.SRCALPHA)
+
+    bucket_size = 4
+    bucketed_radius = max(1, ((radius + bucket_size // 2) // bucket_size) * bucket_size)
+
+    base_surface = _planet_surface(bucketed_radius)
+
+    if bucketed_radius == radius:
+        return base_surface
+
+    scale = radius / bucketed_radius
+    width, height = base_surface.get_size()
+    scaled_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+
+    if scaled_size == base_surface.get_size():
+        return base_surface
+
+    return pygame.transform.smoothscale(base_surface, scaled_size)
 
 
-def draw_satellite(surface: pygame.Surface, position: tuple[int, int]) -> None:
-    sat_surface = _satellite_surface()
-    rect = sat_surface.get_rect(center=position)
-    surface.blit(sat_surface, rect)
+@lru_cache(maxsize=64)
+def _satellite_surface(radius: int) -> pygame.Surface:
+    size = radius * 4
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    center = size // 2
+    light_dir = SAT_LIGHT_DIR
+    length = math.hypot(light_dir[0], light_dir[1])
+    if length != 0:
+        light_dir = (light_dir[0] / length, light_dir[1] / length)
+    for y in range(size):
+        for x in range(size):
+            dx = x - center + 0.5
+            dy = y - center + 0.5
+            dist = math.hypot(dx, dy)
+            if dist > radius:
+                continue
+            t = dist / max(1, radius)
+            base_color = _lerp_color(SAT_COLOR_CORE, SAT_COLOR_EDGE, t)
+            nx = dx / max(1e-6, radius)
+            ny = dy / max(1e-6, radius)
+            dot = max(0.0, nx * light_dir[0] + ny * light_dir[1])
+            rim = min(1.0, (t ** 1.5) * (dot ** 2) * 2.0)
+            color = _lerp_color(base_color, SAT_HIGHLIGHT_COLOR, rim)
+            surface.set_at((x, y), (*color, 255))
+    return surface.convert_alpha()
+
+
+def draw_satellite(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    planet_position: tuple[int, int] | None,
+    radius: int,
+) -> None:
+    if radius <= 0:
+        return
+
+    if planet_position is not None:
+        dx = planet_position[0] - position[0]
+        dy = planet_position[1] - position[1]
+        distance = math.hypot(dx, dy)
+        if distance != 0:
+            offset_scale = radius * 0.6
+            offset_x = int(dx / distance * offset_scale)
+            offset_y = int(dy / distance * offset_scale)
+        else:
+            offset_x = offset_y = 0
+        shadow_surface = pygame.Surface((radius * 4, radius * 4), pygame.SRCALPHA)
+        pygame.draw.circle(
+            shadow_surface,
+            SAT_SHADOW_COLOR,
+            (radius * 2, radius * 2),
+            radius,
+        )
+        shadow_rect = shadow_surface.get_rect(
+            center=(position[0] + offset_x, position[1] + offset_y)
+        )
+        surface.blit(shadow_surface, shadow_rect)
+
+    sat_surface = _satellite_surface(radius)
+    sat_rect = sat_surface.get_rect(center=position)
+    surface.blit(sat_surface, sat_rect)
+
+
+def draw_marker_pin(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    *,
+    color: tuple[int, int, int],
+    alpha: int,
+    orientation: str,
+) -> None:
+    if alpha <= 0:
+        return
+
+    half_width = LABEL_MARKER_PIN_WIDTH // 2
+    offset = LABEL_MARKER_PIN_OFFSET
+    height = LABEL_MARKER_PIN_HEIGHT
+
+    if orientation == "pericenter":
+        base_y = position[1] + offset
+        tip = (position[0], position[1] + height)
+    else:
+        base_y = position[1] - offset
+        tip = (position[0], position[1] - height)
+
+    base_left = (position[0] - half_width, base_y)
+    base_right = (position[0] + half_width, base_y)
+
+    pygame.draw.polygon(
+        surface,
+        (*color, alpha),
+        [base_left, base_right, tip],
+    )
+
+    pygame.draw.line(
+        surface,
+        (*color, min(255, int(alpha * 0.95))),
+        position,
+        tip,
+        2,
+    )
+
+
+def draw_menu_planet(
+    surface: pygame.Surface,
+    center: tuple[int, int],
+    diameter: int,
+    *,
+    image: pygame.Surface | None = None,
+) -> None:
+    if diameter <= 0:
+        return
+
+    if image is not None:
+        width, height = image.get_size()
+        scale = diameter / max(width, height)
+        new_size = (
+            max(1, int(width * scale)),
+            max(1, int(height * scale)),
+        )
+        scaled = pygame.transform.smoothscale(image, new_size)
+        rect = scaled.get_rect(center=center)
+        surface.blit(scaled, rect)
+        return
+
+    radius = diameter // 2
+    glow_radius = int(radius * 1.35)
+    placeholder_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+    pygame.draw.circle(
+        placeholder_surface,
+        MENU_PLANET_GLOW_COLOR,
+        (glow_radius, glow_radius),
+        glow_radius,
+    )
+
+    planet_surface = _planet_surface(radius)
+    planet_rect = planet_surface.get_rect(center=(glow_radius, glow_radius))
+    placeholder_surface.blit(planet_surface, planet_rect)
+
+    orbit_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+    orbit_rect = pygame.Rect(0, 0, int(radius * 2.6), int(radius * 1.6))
+    orbit_rect.center = (glow_radius, glow_radius + MENU_PLANET_ORBIT_OFFSET)
+    pygame.draw.ellipse(
+        orbit_surface,
+        MENU_PLANET_RING_COLOR,
+        orbit_rect,
+        MENU_PLANET_RING_WIDTH,
+    )
+    orbit_surface = pygame.transform.rotate(orbit_surface, -18)
+    placeholder_surface.blit(orbit_surface, (0, 0))
+
+    satellite_radius = max(3, radius // 7)
+    satellite_angle = math.radians(32)
+    satellite_distance = radius + int(radius * 0.55)
+    satellite_pos = (
+        glow_radius + int(math.cos(satellite_angle) * satellite_distance),
+        glow_radius - int(math.sin(satellite_angle) * satellite_distance),
+    )
+    pygame.draw.circle(
+        placeholder_surface,
+        MENU_PLANET_RING_COLOR,
+        satellite_pos,
+        satellite_radius,
+    )
+
+    placeholder_surface.set_alpha(MENU_PLANET_PLACEHOLDER_ALPHA)
+    surface.blit(placeholder_surface, placeholder_surface.get_rect(center=center))
 
 
 def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
@@ -116,35 +297,167 @@ def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tu
     pygame.draw.polygon(surface, VEL_COLOR, [end, left, right])
 
 
-def generate_starfield(num_stars: int) -> list[dict[str, float | tuple[int, int]]]:
-    stars: list[dict[str, float | tuple[int, int]]] = []
+def generate_starfield(num_stars: int) -> list[dict[str, object]]:
+    stars: list[dict[str, object]] = []
     for _ in range(num_stars):
         x = random.uniform(0, WIDTH)
         y = random.uniform(0, HEIGHT)
-        size = random.choice([1, 1, 1, 2])
-        brightness = random.randint(140, 220)
-        parallax = random.uniform(0.05, 0.35)
-        stars.append({
-            "pos": (x, y),
-            "size": size,
-            "brightness": brightness,
-            "parallax": parallax,
-        })
+        radius = random.choice([1, 1, 1, 2])
+        alpha = random.randint(80, 150)
+        base = random.randint(200, 240)
+        color = (
+            max(0, base - random.randint(10, 25)),
+            max(0, base - random.randint(5, 15)),
+            base,
+        )
+        star_surface = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(
+            star_surface,
+            (*color, alpha),
+            (radius, radius),
+            radius,
+        )
+        star_surface = star_surface.convert_alpha()
+        stars.append(
+            {
+                "pos": (x, y),
+                "surface": star_surface,
+                "radius": radius,
+            }
+        )
     return stars
 
 
 def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: float) -> None:
-    offset_x = camera_center[0] * ppm
-    offset_y = camera_center[1] * ppm
+    offset_x = camera_center[0] * ppm * STARFIELD_PARALLAX
+    offset_y = camera_center[1] * ppm * STARFIELD_PARALLAX
+    width = WIDTH
+    height = HEIGHT
+    if width == 0 or height == 0:
+        return
+
+    offset_x_mod = offset_x % width
+    offset_y_mod = offset_y % height
+    blit = surface.blit
     for star in STARFIELD:
         base_x, base_y = star["pos"]  # type: ignore[index]
-        parallax = star["parallax"]  # type: ignore[index]
-        sx = int((base_x - offset_x * parallax) % WIDTH)
-        sy = int((base_y + offset_y * parallax) % HEIGHT)
-        brightness = star["brightness"]  # type: ignore[index]
-        color = (brightness, brightness, brightness)
-        size = star["size"]  # type: ignore[index]
-        surface.fill(color, (sx, sy, size, size))
+        star_surface = star["surface"]  # type: ignore[index]
+        radius = star["radius"]  # type: ignore[index]
+        sx = base_x - offset_x_mod
+        sy = base_y + offset_y_mod
+
+        if sx < 0:
+            sx += width
+        elif sx >= width:
+            sx -= width
+
+        if sy < 0:
+            sy += height
+        elif sy >= height:
+            sy -= height
+
+        blit(star_surface, (int(sx) - radius, int(sy) - radius))
+
+
+@dataclass
+class ParallaxLayer:
+    surface: pygame.Surface
+    velocity: tuple[float, float]
+    mouse_factor: float
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+
+    def advance(self, dt: float) -> None:
+        if dt <= 0.0:
+            return
+        width = max(1, self.surface.get_width())
+        height = max(1, self.surface.get_height())
+        self.offset_x = (self.offset_x + self.velocity[0] * dt) % width
+        self.offset_y = (self.offset_y + self.velocity[1] * dt) % height
+
+    def draw(self, target: pygame.Surface, mouse_offset: tuple[float, float]) -> None:
+        width = self.surface.get_width()
+        height = self.surface.get_height()
+        if width == 0 or height == 0:
+            return
+        mouse_shift_x = mouse_offset[0] * self.mouse_factor * width
+        mouse_shift_y = mouse_offset[1] * self.mouse_factor * height
+        ox = (self.offset_x + mouse_shift_x) % width
+        oy = (self.offset_y + mouse_shift_y) % height
+        base_x = -ox
+        base_y = -oy
+        for dx in (0, width):
+            for dy in (0, height):
+                target.blit(self.surface, (int(base_x + dx), int(base_y + dy)))
+
+
+def generate_menu_parallax_layers(width: int, height: int) -> list[ParallaxLayer]:
+    rng = random.Random(5123)
+    star_count = max(120, int(max(width, height) * 0.25))
+    layer_specs = [
+        {
+            "count": max(1, int(star_count * 0.55)),
+            "radius_choices": [1, 1, 1, 2],
+            "alpha_range": (45, 110),
+            "velocity": (-8.0, 0.0),
+            "mouse_factor": 0.010,
+        },
+        {
+            "count": max(1, int(star_count * 0.35)),
+            "radius_choices": [1, 2, 2, 3],
+            "alpha_range": (80, 160),
+            "velocity": (-18.0, 4.0),
+            "mouse_factor": 0.018,
+        },
+        {
+            "count": max(1, int(star_count * 0.22)),
+            "radius_choices": [2, 3, 3, 4],
+            "alpha_range": (110, 210),
+            "velocity": (-32.0, 12.0),
+            "mouse_factor": 0.028,
+        },
+    ]
+    layers: list[ParallaxLayer] = []
+    for spec in layer_specs:
+        layer_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        for _ in range(spec["count"]):
+            radius = rng.choice(spec["radius_choices"])
+            alpha = rng.randint(*spec["alpha_range"])
+            color = (
+                rng.randint(120, 190),
+                rng.randint(160, 220),
+                255,
+                alpha,
+            )
+            x = rng.randint(0, width)
+            y = rng.randint(0, height)
+            pygame.draw.circle(layer_surface, color, (x, y), radius)
+        layer_surface = layer_surface.convert_alpha()
+        layer = ParallaxLayer(
+            surface=layer_surface,
+            velocity=(
+                spec["velocity"][0] * (0.6 + rng.random() * 0.8),
+                spec["velocity"][1] * (0.6 + rng.random() * 0.8),
+            ),
+            mouse_factor=spec["mouse_factor"],
+        )
+        layer.offset_x = rng.uniform(0, max(1, width))
+        layer.offset_y = rng.uniform(0, max(1, height))
+        layers.append(layer)
+    return layers
+
+
+def load_font(preferred_names: list[str], size: int, *, bold: bool = False) -> pygame.font.Font:
+    for name in preferred_names:
+        try:
+            match = pygame.font.match_font(name, bold=bold)
+        except Exception:
+            match = None
+        if match:
+            return pygame.font.Font(match, size)
+    fallback_name = preferred_names[0] if preferred_names else None
+    return pygame.font.SysFont(fallback_name, size, bold=bold)
+
 
 # =======================
 #   FYSIK & KONSTANTER
@@ -157,6 +470,58 @@ EARTH_RADIUS = 6_371_000      # m
 R0 = np.array([7_000_000.0, 0.0])  # m
 V0 = np.array([0.0, 7_600.0])      # m/s
 
+
+@dataclass(frozen=True)
+class Scenario:
+    """Preset initial-conditions used by the Scenario Mode."""
+
+    key: str
+    name: str
+    velocity: tuple[float, float]
+    description: str
+
+    def velocity_vector(self) -> np.ndarray:
+        return np.array(self.velocity, dtype=float)
+
+
+SCENARIO_DEFINITIONS: tuple[Scenario, ...] = (
+    Scenario(
+        key="leo",
+        name="LEO",
+        velocity=(0.0, 7_600.0),
+        description="Classic circular low Earth orbit (~7.6 km/s prograde).",
+    ),
+    Scenario(
+        key="suborbital",
+        name="Suborbital",
+        velocity=(0.0, 6_000.0),
+        description="Too slow for orbit – dramatic re-entry arc (~6.0 km/s).",
+    ),
+    Scenario(
+        key="escape",
+        name="Escape",
+        velocity=(0.0, 11_500.0),
+        description="High-energy burn that easily exceeds escape velocity (~11.5 km/s).",
+    ),
+    Scenario(
+        key="parabolic",
+        name="Parabolic",
+        velocity=(0.0, 10_000.0),
+        description="Close to the escape threshold (~10.0 km/s).",
+    ),
+    Scenario(
+        key="retrograde",
+        name="Retrograde",
+        velocity=(0.0, -7_600.0),
+        description="Same magnitude as LEO but flipped for retrograde flight.",
+    ),
+)
+
+SCENARIOS: dict[str, Scenario] = {scenario.key: scenario for scenario in SCENARIO_DEFINITIONS}
+SCENARIO_DISPLAY_ORDER: list[str] = [scenario.key for scenario in SCENARIO_DEFINITIONS]
+DEFAULT_SCENARIO_KEY = SCENARIO_DISPLAY_ORDER[0]
+SCENARIO_FLASH_DURATION = 2.0
+
 # =======================
 #   SIMULATOR-SETTINGS
 # =======================
@@ -165,11 +530,15 @@ REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
 MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
 LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
 ESCAPE_RADIUS_FACTOR = 20.0
-TRAIL_FADE_ALPHA = 12
+ORBIT_PREDICTION_INTERVAL = 1.0
+MAX_ORBIT_PREDICTION_SAMPLES = 2_000
+MAX_RENDERED_ORBIT_POINTS = 800
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
 # =======================
+# Dessa värden sätts om efter att displayen initierats, men behöver
+# startvärden för typkontroller och tooling.
 WIDTH, HEIGHT = 1000, 800
 BG_COLOR_TOP = (5, 10, 25)
 BG_COLOR_BOTTOM = (10, 30, 60)
@@ -238,26 +607,141 @@ def clamp(val, lo, hi):
     return max(lo, min(hi, val))
 
 
+def compute_satellite_radius(r_magnitude: float) -> int:
+    altitude = max(0.0, r_magnitude - EARTH_RADIUS)
+    scale = 1.0 + clamp(altitude / 20_000_000.0, 0.0, 0.2)
+    return max(3, int(round(SAT_BASE_RADIUS * scale)))
+
+
+def draw_orbit_line(
+    surface: pygame.Surface,
+    color: tuple[int, int, int] | tuple[int, int, int, int],
+    points: list[tuple[int, int]],
+    width: int,
+) -> None:
+    if len(points) < 2:
+        return
+    if width <= 1:
+        pygame.draw.aalines(surface, color, False, points)
+    else:
+        pygame.draw.lines(surface, color, False, points, width)
+        pygame.draw.aalines(surface, color, False, points)
+
+
+def downsample_points(
+    points: list[tuple[float, float]], max_points: int
+) -> list[tuple[float, float]]:
+    if len(points) <= max_points:
+        return list(points)
+    step = max(1, math.ceil(len(points) / max_points))
+    sampled = points[::step]
+    if sampled[-1] != points[-1]:
+        sampled.append(points[-1])
+    return sampled
+
+
+def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[float | None, list[tuple[float, float]]]:
+    eps = energy_specific(r_init, v_init)
+    if eps >= 0.0:
+        return None, []
+
+    a = -MU / (2.0 * eps)
+    period = 2.0 * math.pi * math.sqrt(a**3 / MU)
+    estimated_samples = max(360, int(period / ORBIT_PREDICTION_INTERVAL))
+    num_samples = max(2, min(MAX_ORBIT_PREDICTION_SAMPLES, estimated_samples))
+    dt = period / num_samples
+
+    r = r_init.copy()
+    v = v_init.copy()
+    points: list[tuple[float, float]] = []
+    for _ in range(num_samples + 1):
+        points.append((float(r[0]), float(r[1])))
+        r, v = rk4_step(r, v, dt)
+
+    return period, points
+
+
+@dataclass(frozen=True)
+class ButtonVisualStyle:
+    base_color: tuple[int, int, int] | tuple[int, int, int, int]
+    hover_color: tuple[int, int, int] | tuple[int, int, int, int]
+    text_color: tuple[int, int, int]
+    radius: int
+    border_color: tuple[int, int, int] | tuple[int, int, int, int] | None = None
+    border_width: int = 0
+
+
+DEFAULT_BUTTON_STYLE = ButtonVisualStyle(
+    base_color=BUTTON_COLOR,
+    hover_color=BUTTON_HOVER_COLOR,
+    text_color=BUTTON_TEXT_COLOR,
+    radius=BUTTON_RADIUS,
+)
+
+MENU_BUTTON_STYLE = ButtonVisualStyle(
+    base_color=MENU_BUTTON_COLOR,
+    hover_color=MENU_BUTTON_HOVER_COLOR,
+    text_color=MENU_BUTTON_TEXT_COLOR,
+    radius=MENU_BUTTON_RADIUS,
+    border_color=MENU_BUTTON_BORDER_COLOR,
+    border_width=2,
+)
+
+
 class Button:
     """Simple rectangular button with hover feedback and callbacks."""
 
-    def __init__(self, rect, text, callback, text_getter=None):
+    def __init__(self, rect, text, callback, text_getter=None, *, style: ButtonVisualStyle | None = None):
         self.rect = pygame.Rect(rect)
         self._text = text
         self._callback = callback
         self._text_getter = text_getter
+        self._cached_text_surface: pygame.Surface | None = None
+        self._cached_text: str | None = None
+        self._cached_font_id: int | None = None
+        self._style = style
 
     def get_text(self):
         if self._text_getter is not None:
             return self._text_getter()
         return self._text
 
-    def draw(self, surface, font):
-        mouse_pos = pygame.mouse.get_pos()
+    def draw(self, surface, font, mouse_pos=None):
+        if mouse_pos is None:
+            mouse_pos = pygame.mouse.get_pos()
         hovered = self.rect.collidepoint(mouse_pos)
-        color = BUTTON_HOVER_COLOR if hovered else BUTTON_COLOR
-        pygame.draw.rect(surface, color, self.rect, border_radius=8)
-        text_surf = font.render(self.get_text(), True, BUTTON_TEXT_COLOR)
+        style = self._style or DEFAULT_BUTTON_STYLE
+        color = style.hover_color if hovered else style.base_color
+        button_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            button_surface,
+            color,
+            button_surface.get_rect(),
+            border_radius=style.radius,
+        )
+        if style.border_color is not None and style.border_width > 0:
+            pygame.draw.rect(
+                button_surface,
+                style.border_color,
+                button_surface.get_rect(),
+                style.border_width,
+                border_radius=style.radius,
+            )
+        surface.blit(button_surface, self.rect.topleft)
+        text_value = self.get_text()
+        font_id = id(font)
+        if (
+            self._cached_text_surface is None
+            or text_value != self._cached_text
+            or font_id != self._cached_font_id
+        ):
+            self._cached_text_surface = font.render(text_value, True, style.text_color)
+            self._cached_text = text_value
+            self._cached_font_id = font_id
+        text_surf = self._cached_text_surface
+        if HUD_TEXT_ALPHA < 255:
+            text_surf = text_surf.copy()
+            text_surf.set_alpha(HUD_TEXT_ALPHA)
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
 
@@ -271,42 +755,241 @@ class Button:
 # =======================
 def main():
     pygame.init()
-    pygame.display.set_caption("Omloppsbana i realtid (Pygame + RK4)")
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Gymnasiearbete - Simulering av omloppsbana")
+    font_fps = pygame.font.SysFont("consolas", 14)
+
+    fullscreen_flags = FULLSCREEN | DOUBLEBUF
+    borderless_flags = NOFRAME | DOUBLEBUF
+    info = pygame.display.Info()
+    fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
+
+    screen: pygame.Surface | None = None
+    if info.current_w and info.current_h:
+        try:
+            os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
+            screen = pygame.display.set_mode((info.current_w, info.current_h), borderless_flags)
+        except pygame.error:
+            screen = None
+
+    if screen is None:
+        try:
+            screen = pygame.display.set_mode((0, 0), fullscreen_flags)
+        except pygame.error:
+            # Fallback till fönsterläge om fullscreen inte stöds.
+            screen = pygame.display.set_mode(fallback_resolution, DOUBLEBUF)
+
+    screen_width, screen_height = screen.get_size()
+    update_display_metrics(screen_width, screen_height)
+
+    overlay_size = (WIDTH, HEIGHT)
+    trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+    orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+    label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+
     clock = pygame.time.Clock()
-    font = pygame.font.SysFont("consolas", 20)
-    title_font = pygame.font.SysFont("consolas", 40, bold=True)
-    subtitle_font = pygame.font.SysFont("consolas", 24)
+    font = pygame.font.SysFont("consolas", 18)
+    scenario_font = pygame.font.SysFont("consolas", 16)
+
+    def render_marker_label(
+        surface: pygame.Surface,
+        marker_type: str,
+        marker_pos: tuple[int, int],
+        radius_world: float,
+        *,
+        pinned: bool = False,
+    ) -> None:
+        label = marker_display_name(marker_type)
+        altitude_km = (radius_world - EARTH_RADIUS) / 1_000.0
+        text = f"{label}: {altitude_km:,.1f} km"
+        text_surf = font.render(text, True, LABEL_TEXT_COLOR)
+        if HUD_TEXT_ALPHA < 255:
+            text_surf.set_alpha(HUD_TEXT_ALPHA)
+
+        padding = 6
+        bg_width = text_surf.get_width() + padding * 2
+        bg_height = text_surf.get_height() + padding * 2
+
+        background_color = LABEL_PINNED_BACKGROUND_COLOR if pinned else LABEL_BACKGROUND_COLOR
+        connector_alpha = LABEL_MARKER_PINNED_OUTLINE_ALPHA if pinned else int(LABEL_MARKER_ALPHA * 0.6)
+        connector_color = LABEL_MARKER_PINNED_GLOW_COLOR if pinned else LABEL_MARKER_COLOR
+        line_length = 24 if pinned else 18
+        direction = -1 if marker_type == "pericenter" else 1
+        anchor_y = marker_pos[1] + direction * line_length
+
+        bg_rect = pygame.Rect(0, 0, bg_width, bg_height)
+        bg_rect.center = (
+            marker_pos[0],
+            int(anchor_y + direction * (bg_rect.height / 2 + 6)),
+        )
+
+        pygame.draw.line(
+            surface,
+            (*connector_color, connector_alpha),
+            marker_pos,
+            (marker_pos[0], anchor_y),
+            2,
+        )
+
+        pygame.draw.rect(
+            surface,
+            background_color,
+            bg_rect,
+            border_radius=12 if pinned else 10,
+        )
+
+        surface.blit(text_surf, (bg_rect.left + padding, bg_rect.top + padding))
+
+        if pinned:
+            badge_text = "PINNED"
+            badge_padding_x = 6
+            badge_padding_y = 2
+            badge_surf = font_fps.render(badge_text, True, LABEL_PINNED_BADGE_TEXT_COLOR)
+            badge_rect = pygame.Rect(
+                0,
+                0,
+                badge_surf.get_width() + badge_padding_x * 2,
+                badge_surf.get_height() + badge_padding_y * 2,
+            )
+            badge_rect.midbottom = (bg_rect.centerx, bg_rect.top - 4)
+            pygame.draw.rect(
+                surface,
+                LABEL_PINNED_BADGE_COLOR,
+                badge_rect,
+                border_radius=badge_rect.height // 2,
+            )
+            surface.blit(
+                badge_surf,
+                (badge_rect.left + badge_padding_x, badge_rect.top + badge_padding_y),
+            )
+
+    min_dimension = min(WIDTH, HEIGHT)
+    title_font_size = max(48, int(min_dimension * 0.075))
+    subtitle_font_size = max(26, int(min_dimension * 0.032))
 
     gradient_bg = create_vertical_gradient(WIDTH, HEIGHT, BG_COLOR_TOP, BG_COLOR_BOTTOM)
+    menu_background = gradient_bg.copy()
+    menu_parallax_layers = generate_menu_parallax_layers(WIDTH, HEIGHT)
+    menu_mouse_offset = [0.0, 0.0]
+    menu_last_time = time.perf_counter()
+
+    menu_glow_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    glow_radius = int(min(WIDTH, HEIGHT) * 0.45)
+    pygame.draw.circle(
+        menu_glow_surface,
+        (70, 120, 255, 45),
+        (WIDTH // 2, HEIGHT // 2),
+        glow_radius,
+    )
+    menu_background.blit(menu_glow_surface, (0, 0))
+
+    title_font = load_font(["montserrat", "futura", "avenir", "arial"], title_font_size, bold=True)
+    subtitle_font = load_font(["montserrat", "futura", "avenir", "arial"], subtitle_font_size)
+    menu_button_size = max(60, int(min_dimension * 0.08))
+    menu_planet_diameter = max(700, min(320, int(min_dimension * 0.32)))
+    menu_button_height = max(100, int(menu_button_size * 0.26))
+    menu_button_font_size = min(menu_button_height - 12, max(26, int(menu_button_height * 0.52)))
+    menu_button_font = load_font(
+        ["montserrat", "futura", "avenir", "arial"],
+        menu_button_font_size,
+        bold=True,
+    )
+
+    assets_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets"))
+    planet_image_path = os.path.join(assets_root, "main_menu_art.png")
+    menu_planet_image: pygame.Surface | None = None
+    if os.path.exists(planet_image_path):
+        try:
+            menu_planet_image = pygame.image.load(planet_image_path).convert_alpha()
+        except pygame.error:
+            menu_planet_image = None
+
+    current_scenario_key = DEFAULT_SCENARIO_KEY
+    scenario_flash_text: str | None = None
+    scenario_flash_time = 0.0
+
+    scenario_shortcut_map: dict[int, str] = {}
+    number_key_codes = [
+        pygame.K_1,
+        pygame.K_2,
+        pygame.K_3,
+        pygame.K_4,
+        pygame.K_5,
+        pygame.K_6,
+        pygame.K_7,
+        pygame.K_8,
+        pygame.K_9,
+    ]
+    keypad_key_codes = [
+        pygame.K_KP1,
+        pygame.K_KP2,
+        pygame.K_KP3,
+        pygame.K_KP4,
+        pygame.K_KP5,
+        pygame.K_KP6,
+        pygame.K_KP7,
+        pygame.K_KP8,
+        pygame.K_KP9,
+    ]
+    for index, scenario_key in enumerate(SCENARIO_DISPLAY_ORDER, start=1):
+        if index <= len(number_key_codes):
+            scenario_shortcut_map[number_key_codes[index - 1]] = scenario_key
+        if index <= len(keypad_key_codes):
+            scenario_shortcut_map[keypad_key_codes[index - 1]] = scenario_key
+
+    scenario_panel_title = "Scenario Mode – press 1-5 to switch"
+    scenario_help_lines = [
+        f"[{idx}] {SCENARIOS[key].name} – {SCENARIOS[key].description}"
+        for idx, key in enumerate(SCENARIO_DISPLAY_ORDER, start=1)
+    ]
+
+    def get_current_scenario() -> Scenario:
+        return SCENARIOS[current_scenario_key]
+
+    def scenario_velocity_vector(key: str | None = None) -> np.ndarray:
+        scenario = SCENARIOS[key or current_scenario_key]
+        return scenario.velocity_vector()
+
     global STARFIELD
     if not STARFIELD:
-        STARFIELD = generate_starfield(450)
+        STARFIELD = generate_starfield(220)
+
+    layout_center_y = HEIGHT // 2
+    title_y = max(int(layout_center_y - HEIGHT * 0.27), int(HEIGHT * 0.14))
+    subtitle_y = title_y + max(40, int(HEIGHT * 0.06))
+    planet_center = (WIDTH // 2, layout_center_y - int(HEIGHT * 0.03))
+    menu_button_width = max(200, int(menu_button_height * 6))
+    menu_button_gap = max(20, int(menu_button_height * 0.36))
+    button_block_height = menu_button_height * 2 + menu_button_gap
+    default_button_y = planet_center[1] + menu_planet_diameter // 2 + max(48, int(HEIGHT * 0.07))
+    max_button_y = HEIGHT - button_block_height - 80
+    menu_button_y = min(default_button_y, max_button_y)
+    menu_button_y = max(menu_button_y, subtitle_y + max(60, int(HEIGHT * 0.08)))
+    menu_button_x = WIDTH // 2 - menu_button_width // 2
+    menu_title_text = "SIMULERING AV OMLOPPSBANA"
+    menu_subtitle_text = "av Axel Jönsson"
 
     # Simuleringsstate
     r = R0.copy()
-    v = V0.copy()
+    v = scenario_velocity_vector()
     t_sim = 0.0
     paused = False
-    show_trail = True
     ppm = PIXELS_PER_METER
     ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
     camera_mode = "earth"
     camera_center = np.array([0.0, 0.0], dtype=float)
     camera_target = np.array([0.0, 0.0], dtype=float)
+    is_dragging_camera = False
+    drag_last_pos = (0, 0)
 
-    vel_vector_scale = 500.0  # endast visuellt
-    arrow_head_length = 20
-    arrow_head_angle = math.radians(28)
+    orbit_prediction_period: float | None = None
+    orbit_prediction_points: list[tuple[float, float]] = []
 
-    trail_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    trail_surface.fill((0, 0, 0, 0))
-    trail_prev_screen_pos: tuple[int, int] | None = None
-    trail_last_ppm = ppm
-    trail_last_camera = camera_center.copy()
-
-    orbit_markers: deque[tuple[str, float, float]] = deque(maxlen=20)
+    orbit_markers: deque[tuple[str, float, float, float]] = deque(maxlen=20)
+    trail_history: deque[tuple[float, float, float]] = deque(maxlen=1200)
+    pinned_markers: dict[str, tuple[float, float, float]] = {}
+    pin_feedback_text: str | None = None
+    pin_feedback_time = 0.0
 
     # tidsackumulator för fast fysik
     accumulator = 0.0
@@ -330,10 +1013,13 @@ def main():
         nonlocal r, v, t_sim, paused, ppm, real_time_speed
         nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
         nonlocal impact_logged, escape_logged, ppm_target
-        nonlocal trail_prev_screen_pos, trail_last_ppm, trail_last_camera, camera_center, orbit_markers, camera_target
+        nonlocal camera_center, orbit_markers, camera_target, trail_history
+        nonlocal camera_mode, is_dragging_camera
+        nonlocal orbit_prediction_period, orbit_prediction_points
+        nonlocal pinned_markers, pin_feedback_text, pin_feedback_time
         close_logger()
         r = R0.copy()
-        v = V0.copy()
+        v = scenario_velocity_vector()
         t_sim = 0.0
         paused = False
         ppm = PIXELS_PER_METER
@@ -346,16 +1032,74 @@ def main():
         prev_dr = None
         impact_logged = False
         escape_logged = False
-        trail_surface.fill((0, 0, 0, 0))
-        trail_prev_screen_pos = None
-        trail_last_ppm = ppm
         orbit_markers.clear()
+        pinned_markers.clear()
+        pin_feedback_text = None
+        pin_feedback_time = 0.0
+        trail_history.clear()
         camera_center[:] = (0.0, 0.0)
         camera_target[:] = (0.0, 0.0)
-        trail_last_camera = camera_center.copy()
+        camera_mode = "earth"
+        is_dragging_camera = False
+        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
+
+    def marker_display_name(marker_type: str) -> str:
+        return "Periapsis" if marker_type == "pericenter" else "Apoapsis"
+
+    def get_latest_marker(marker_type: str) -> tuple[float, float, float] | None:
+        for m_type, mx, my, mr in reversed(orbit_markers):
+            if m_type == marker_type:
+                return (mx, my, mr)
+        return None
+
+    def refresh_pinned_marker(marker_type: str) -> None:
+        if marker_type not in pinned_markers:
+            return
+
+        latest = get_latest_marker(marker_type)
+        if latest is not None:
+            pinned_markers[marker_type] = latest
+        else:
+            del pinned_markers[marker_type]
+
+    def marker_hit_test(mouse_pos: tuple[int, int]) -> str | None:
+        if not orbit_markers:
+            return None
+        camera_tuple = (float(camera_center[0]), float(camera_center[1]))
+        closest_type: str | None = None
+        closest_distance = float("inf")
+        for marker_type, mx, my, _ in reversed(orbit_markers):
+            marker_pos = world_to_screen(mx, my, ppm, camera_tuple)
+            distance = math.hypot(marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1])
+            if distance <= LABEL_MARKER_HOVER_RADIUS and distance < closest_distance:
+                closest_distance = distance
+                closest_type = marker_type
+        return closest_type
+
+    def toggle_marker_pin(marker_type: str) -> bool:
+        if marker_type in pinned_markers:
+            del pinned_markers[marker_type]
+            return False
+        latest = get_latest_marker(marker_type)
+        if latest is None:
+            return False
+        pinned_markers[marker_type] = latest
+        return True
+
+    def set_scenario(new_key: str) -> None:
+        nonlocal current_scenario_key, scenario_flash_text, scenario_flash_time
+        if new_key not in SCENARIOS:
+            return
+        current_scenario_key = new_key
+        scenario = get_current_scenario()
+        scenario_flash_text = f"{scenario.name} scenario loaded"
+        scenario_flash_time = time.perf_counter()
+        reset()
+        if state == "running":
+            init_run_logging()
 
     def log_state(dt_eff: float) -> None:
         if logger is None:
@@ -386,10 +1130,15 @@ def main():
         nonlocal logger, log_step_counter, prev_r, prev_dr, impact_logged, escape_logged
         close_logger()
         logger = RunLogger()
+        scenario = get_current_scenario()
+        v0_vector = scenario.velocity_vector()
         meta = {
+            "scenario_key": scenario.key,
+            "scenario_name": scenario.name,
+            "scenario_description": scenario.description,
             "R0": R0.tolist(),
-            "V0": V0.tolist(),
-            "v0": float(np.linalg.norm(V0)),
+            "V0": v0_vector.tolist(),
+            "v0": float(np.linalg.norm(v0_vector)),
             "G": G,
             "M": M,
             "mu": MU,
@@ -418,17 +1167,12 @@ def main():
         pygame.quit()
         sys.exit()
 
-    menu_button_width = 260
-    menu_button_height = 56
-    menu_button_x = WIDTH // 2 - menu_button_width // 2
-    menu_button_y = HEIGHT // 2 - menu_button_height
-    menu_button_gap = 20
-
     menu_buttons = [
         Button(
             (menu_button_x, menu_button_y, menu_button_width, menu_button_height),
-            "Start Simulation",
+            "STARTA SIMULATION",
             start_simulation,
+            style=MENU_BUTTON_STYLE,
         ),
         Button(
             (
@@ -437,8 +1181,9 @@ def main():
                 menu_button_width,
                 menu_button_height,
             ),
-            "Quit",
+            "AVSLUTA",
             quit_app,
+            style=MENU_BUTTON_STYLE,
         ),
     ]
 
@@ -450,10 +1195,6 @@ def main():
         nonlocal paused
         paused = not paused
 
-    def toggle_trail():
-        nonlocal show_trail
-        show_trail = not show_trail
-
     def slow_down():
         nonlocal real_time_speed
         real_time_speed = max(real_time_speed / 1.5, 0.1)
@@ -464,42 +1205,84 @@ def main():
 
     def toggle_camera():
         nonlocal camera_mode
-        camera_mode = "satellite" if camera_mode == "earth" else "earth"
+        if camera_mode == "earth":
+            camera_mode = "satellite"
+        elif camera_mode == "satellite":
+            camera_mode = "manual"
+        else:
+            camera_mode = "earth"
 
     def reset_and_continue():
         reset()
         if state == "running":
             init_run_logging()
 
+    sim_buttons: list[Button] = []
+
+    def update_sim_button_layout() -> None:
+        if not sim_buttons:
+            return
+
+        total_buttons = len(sim_buttons)
+        total_height = total_buttons * button_height + (total_buttons - 1) * button_gap
+        start_y = int((HEIGHT - total_height) / 2)
+        x_pos = WIDTH - button_width - 20
+
+        for idx, btn in enumerate(sim_buttons):
+            top = start_y + idx * (button_height + button_gap)
+            btn.rect.update(x_pos, top, button_width, button_height)
+
     sim_buttons = [
         Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if paused else "Pause"),
         Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset_and_continue),
         Button(
             (20, 20 + 2 * (button_height + button_gap), button_width, button_height),
-            "Trail",
-            toggle_trail,
-            lambda: "Trail: On" if show_trail else "Trail: Off",
-        ),
-        Button(
-            (20, 20 + 3 * (button_height + button_gap), button_width, button_height),
             "Slower",
             slow_down,
         ),
         Button(
-            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
+            (20, 20 + 3 * (button_height + button_gap), button_width, button_height),
             "Faster",
             speed_up,
         ),
         Button(
-            (20, 20 + 5 * (button_height + button_gap), button_width, button_height),
+            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
             "Camera",
             toggle_camera,
-            lambda: "Camera: Earth" if camera_mode == "earth" else "Camera: Sat",
+            lambda: (
+                "Camera: Earth"
+                if camera_mode == "earth"
+                else "Camera: Sat" if camera_mode == "satellite" else "Camera: Free"
+            ),
         ),
     ]
 
+    update_sim_button_layout()
+
+    def is_over_button(pos: tuple[int, int]) -> bool:
+        if state == "menu":
+            return any(btn.rect.collidepoint(pos) for btn in menu_buttons)
+        if state == "running":
+            return any(btn.rect.collidepoint(pos) for btn in sim_buttons)
+        return False
+
     # ========= LOOP =========
     while True:
+        current_size = screen.get_size()
+        if current_size != overlay_size:
+            overlay_size = current_size
+            update_display_metrics(*current_size)
+            update_sim_button_layout()
+            trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+            orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+            label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+
+        trail_surface.fill((0, 0, 0, 0))
+        orbit_layer.fill((0, 0, 0, 0))
+        label_layer.fill((0, 0, 0, 0))
+        trail_drawn = False
+        orbit_drawn = False
+        labels_drawn = False
         # --- Input ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -507,13 +1290,15 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     quit_app()
+                    continue
+                if event.key in scenario_shortcut_map:
+                    set_scenario(scenario_shortcut_map[event.key])
+                    continue
                 if state == "running":
                     if event.key == pygame.K_SPACE:
                         paused = not paused
                     elif event.key == pygame.K_r:
                         reset_and_continue()
-                    elif event.key == pygame.K_t:
-                        show_trail = not show_trail
                     elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
                         ppm_target = clamp(ppm_target * 1.2, MIN_PPM, MAX_PPM)     # zoom in
                     elif event.key == pygame.K_MINUS:
@@ -530,6 +1315,42 @@ def main():
                         real_time_speed = max(real_time_speed / 2.0, 0.1)
                     elif event.key == pygame.K_c:
                         toggle_camera()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1 and state == "running":
+                    if not is_over_button(event.pos):
+                        clicked_marker = marker_hit_test(event.pos)
+                        if clicked_marker is not None:
+                            is_now_pinned = toggle_marker_pin(clicked_marker)
+                            if is_now_pinned:
+                                refresh_pinned_marker(clicked_marker)
+                            status = "pinned" if is_now_pinned else "unpinned"
+                            pin_feedback_text = f"{marker_display_name(clicked_marker)} {status}"
+                            pin_feedback_time = time.perf_counter()
+                        else:
+                            is_dragging_camera = True
+                            drag_last_pos = event.pos
+                            camera_mode = "manual"
+                            camera_target[:] = camera_center
+                elif event.button == 4 and state == "running":
+                    ppm_target = clamp(ppm_target * 1.1, MIN_PPM, MAX_PPM)
+                elif event.button == 5 and state == "running":
+                    ppm_target = clamp(ppm_target / 1.1, MIN_PPM, MAX_PPM)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    is_dragging_camera = False
+            elif event.type == pygame.MOUSEMOTION:
+                if is_dragging_camera and state == "running":
+                    dx = event.pos[0] - drag_last_pos[0]
+                    dy = event.pos[1] - drag_last_pos[1]
+                    if dx != 0 or dy != 0:
+                        camera_center[0] -= dx / ppm
+                        camera_center[1] += dy / ppm
+                        camera_target[:] = camera_center
+                        drag_last_pos = event.pos
+            elif event.type == pygame.MOUSEWHEEL:
+                if state == "running" and event.y != 0:
+                    zoom_factor = 1.1 ** event.y
+                    ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
             if state == "menu":
                 for btn in menu_buttons:
                     btn.handle_event(event)
@@ -538,19 +1359,80 @@ def main():
                     btn.handle_event(event)
 
         if state == "menu":
-            screen.blit(gradient_bg, (0, 0))
-            title_surf = title_font.render("Omloppsbana i realtid", True, MENU_TITLE_COLOR)
-            subtitle_surf = subtitle_font.render("Välj ett alternativ för att starta", True, MENU_SUBTITLE_COLOR)
-            title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 150))
-            subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100))
+            now_menu = time.perf_counter()
+            menu_frame_dt = min(now_menu - menu_last_time, 0.05)
+            menu_last_time = now_menu
+            menu_mouse_pos = pygame.mouse.get_pos()
+            for layer in menu_parallax_layers:
+                layer.advance(menu_frame_dt)
+
+            center_x = WIDTH * 0.5
+            center_y = HEIGHT * 0.5
+            target_offset_x = (menu_mouse_pos[0] - center_x) / max(1.0, WIDTH)
+            target_offset_y = (menu_mouse_pos[1] - center_y) / max(1.0, HEIGHT)
+            smoothing = 1.0 - math.exp(-menu_frame_dt * 6.0) if menu_frame_dt > 0.0 else 1.0
+            menu_mouse_offset[0] += (target_offset_x - menu_mouse_offset[0]) * smoothing
+            menu_mouse_offset[1] += (target_offset_y - menu_mouse_offset[1]) * smoothing
+
+            screen.blit(menu_background, (0, 0))
+            for layer in menu_parallax_layers:
+                layer.draw(screen, (menu_mouse_offset[0], menu_mouse_offset[1]))
+
+            title_surf = title_font.render(menu_title_text, True, MENU_TITLE_COLOR)
+            title_rect = title_surf.get_rect(center=(WIDTH // 2, title_y))
             screen.blit(title_surf, title_rect)
+
+            subtitle_surf = subtitle_font.render(menu_subtitle_text, True, MENU_SUBTITLE_COLOR)
+            subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, subtitle_y))
             screen.blit(subtitle_surf, subtitle_rect)
 
+            draw_menu_planet(screen, planet_center, menu_planet_diameter, image=menu_planet_image)
+
             for btn in menu_buttons:
-                btn.draw(screen, subtitle_font)
+                btn.draw(screen, menu_button_font, menu_mouse_pos)
+
+            panel_lines = [scenario_panel_title, *scenario_help_lines]
+            if panel_lines:
+                panel_padding = 14
+                line_height = scenario_font.get_linesize()
+                panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
+                panel_height = line_height * len(panel_lines) + panel_padding * 2
+                panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+                pygame.draw.rect(
+                    panel_surface,
+                    LABEL_BACKGROUND_COLOR,
+                    panel_surface.get_rect(),
+                    border_radius=12,
+                )
+                y = panel_padding
+                for idx, line in enumerate(panel_lines):
+                    if idx == 0:
+                        color = HUD_TEXT_COLOR
+                    else:
+                        scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
+                        color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                    text_surf = scenario_font.render(line, True, color)
+                    panel_surface.blit(text_surf, (panel_padding, y))
+                    y += line_height
+                panel_rect = panel_surface.get_rect()
+                panel_rect.topleft = (20, HEIGHT - panel_height - 20)
+                screen.blit(panel_surface, panel_rect)
+
+            if scenario_flash_text and now_menu - scenario_flash_time < SCENARIO_FLASH_DURATION:
+                flash_surf = scenario_font.render(scenario_flash_text, True, MENU_TITLE_COLOR)
+                flash_rect = flash_surf.get_rect(center=(WIDTH // 2, menu_button_y - 40))
+                screen.blit(flash_surf, flash_rect)
+
+            # --- FPS Counter ---
+            fps_value = clock.get_fps()
+            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (140, 180, 220))
+            # placera i nedre högra hörnet
+            text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
+            screen.blit(fps_text, text_rect)
+
 
             pygame.display.flip()
-            clock.tick(60)
+            clock.tick(240)
             continue
 
         # --- Fysik ackumulator ---
@@ -588,7 +1470,10 @@ def main():
                 prev_r = rmag
 
                 if event_type is not None:
-                    orbit_markers.append((event_type, float(r[0]), float(r[1])))
+                    orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
+                    refresh_pinned_marker(event_type)
+
+                trail_history.append((float(r[0]), float(r[1]), time.perf_counter()))
 
                 if logger is not None:
                     log_step_counter += 1
@@ -640,6 +1525,11 @@ def main():
 
             accumulator = 0.0
 
+        now_time = time.perf_counter()
+        cutoff_time = now_time - TRAIL_MAX_DURATION
+        while trail_history and trail_history[0][2] < cutoff_time:
+            trail_history.popleft()
+
         # --- Render ---
         # Smooth zoom mot mål
         ppm += (ppm_target - ppm) * 0.1
@@ -647,77 +1537,255 @@ def main():
 
         # Kamera-targets
         if camera_mode == "earth":
-            camera_target[:] = (0.0, 0.0)
-        else:
+            view_offset = (HEIGHT * 0.08) / max(ppm, 1e-6)
+            camera_target[:] = (0.0, view_offset)
+        elif camera_mode == "satellite":
             camera_target[:] = (r[0], r[1])
+        else:
+            camera_target[:] = camera_center
         camera_center += (camera_target - camera_center) * 0.1
 
         # Bakgrund
         screen.blit(gradient_bg, (0, 0))
         draw_starfield(screen, camera_center, ppm)
 
-        # Jorden
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, tuple(camera_center))
-        earth_px = max(2, int(EARTH_RADIUS * ppm))
-        draw_earth(screen, earth_screen_pos, earth_px)
+        camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
+        mouse_pos = pygame.mouse.get_pos()
+        rmag = float(np.linalg.norm(r))
+        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
-        # Spår
-        if show_trail:
-            camera_delta = np.linalg.norm(camera_center - trail_last_camera)
-            if abs(ppm - trail_last_ppm) > 1e-5 or camera_delta > 5.0:
-                trail_surface.fill((0, 0, 0, 0))
-                trail_prev_screen_pos = None
-                trail_last_ppm = ppm
-                trail_last_camera = camera_center.copy()
+        if orbit_prediction_points:
+            if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
+                reveal_fraction = 1.0
+            else:
+                reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
+            total_points = len(orbit_prediction_points)
+            if reveal_fraction >= 1.0:
+                subset = orbit_prediction_points
+            else:
+                max_index = max(2, int(total_points * reveal_fraction))
+                subset = orbit_prediction_points[:max_index]
+            sampled_points = downsample_points(subset, MAX_RENDERED_ORBIT_POINTS)
+            screen_points = [
+                world_to_screen(px, py, ppm, camera_center_tuple)
+                for px, py in sampled_points
+            ]
+            if len(screen_points) >= 2:
+                draw_orbit_line(orbit_layer, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
+                orbit_drawn = True
 
-            trail_surface.fill((0, 0, 0, TRAIL_FADE_ALPHA), special_flags=pygame.BLEND_RGBA_SUB)
-        else:
-            trail_surface.fill((0, 0, 0, 0))
-            trail_prev_screen_pos = None
+        if orbit_drawn:
+            screen.blit(orbit_layer, (0, 0))
 
-        # Satellit
-        sat_pos = world_to_screen(r[0], r[1], ppm, tuple(camera_center))
-        if show_trail:
-            if trail_prev_screen_pos is not None:
-                pygame.draw.line(trail_surface, TRAIL_COLOR_ALPHA, trail_prev_screen_pos, sat_pos, 3)
-            trail_prev_screen_pos = sat_pos
-            trail_last_ppm = ppm
-            trail_last_camera = camera_center.copy()
+        earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
+        draw_earth(screen, earth_screen_pos, earth_radius_px)
+
+        if len(trail_history) >= 2:
+            trail_points: list[tuple[tuple[int, int], int]] = []
+            for px, py, ts in trail_history:
+                age = now_time - ts
+                if age > TRAIL_MAX_DURATION:
+                    continue
+                point = world_to_screen(px, py, ppm, camera_center_tuple)
+                alpha = int(255 * clamp(1.0 - age / TRAIL_MAX_DURATION, 0.0, 1.0))
+                trail_points.append((point, alpha))
+            if len(trail_points) >= 2:
+                for (p1, a1), (p2, a2) in zip(trail_points[:-1], trail_points[1:]):
+                    alpha = min(a1, a2)
+                    if alpha <= 0:
+                        continue
+                    color = (*TRAIL_COLOR, alpha)
+                    pygame.draw.line(trail_surface, color, p1, p2, 2)
+                trail_drawn = True
+        if trail_drawn:
             screen.blit(trail_surface, (0, 0))
-        draw_satellite(screen, sat_pos)
 
-        for marker_type, mx, my in orbit_markers:
-            marker_pos = world_to_screen(mx, my, ppm, tuple(camera_center))
-            color = PERICENTER_COLOR if marker_type == "pericenter" else APOCENTER_COLOR
-            pygame.draw.circle(screen, color, marker_pos, 6)
-            pygame.draw.circle(screen, (255, 255, 255), marker_pos, 6, 2)
+        sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
+        sat_radius_px = compute_satellite_radius(rmag)
+        draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
 
-        # Hastighetsvektor (visuell)
-        vx, vy = v
-        v_end = world_to_screen(r[0] + vx*vel_vector_scale, r[1] + vy*vel_vector_scale, ppm, tuple(camera_center))
-        draw_velocity_arrow(screen, sat_pos, v_end, arrow_head_length, arrow_head_angle)
+        hovered_marker: tuple[str, tuple[int, int], float] | None = None
+        hovered_distance = float("inf")
+        pinned_label_entries: list[tuple[str, tuple[int, int], float]] = []
+        if orbit_markers:
+            markers_snapshot = list(orbit_markers)
+            latest_index: dict[str, int] = {}
+            for idx, (marker_type, _, _, _) in enumerate(markers_snapshot):
+                latest_index[marker_type] = idx
+            for idx, (marker_type, mx, my, mr) in enumerate(markers_snapshot):
+                marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
+                dist_to_mouse = math.hypot(
+                    marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1]
+                )
+                hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
+                is_latest = latest_index.get(marker_type) == idx
+                is_pinned = marker_type in pinned_markers and is_latest
+                alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
+                radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
+                pin_color = LABEL_MARKER_PINNED_PIN_COLOR if is_pinned else LABEL_MARKER_COLOR
+                if is_pinned:
+                    alpha = max(alpha, 240)
+                    radius = max(radius, LABEL_MARKER_PINNED_RADIUS_PIXELS)
+                    pygame.draw.circle(
+                        label_layer,
+                        (*LABEL_MARKER_PINNED_GLOW_COLOR, LABEL_MARKER_PINNED_GLOW_ALPHA),
+                        marker_pos,
+                        LABEL_MARKER_PINNED_GLOW_RADIUS,
+                    )
+                    pygame.draw.circle(
+                        label_layer,
+                        (*LABEL_MARKER_PINNED_GLOW_COLOR, LABEL_MARKER_PINNED_OUTLINE_ALPHA),
+                        marker_pos,
+                        radius + 4,
+                        2,
+                    )
+                    pinned_label_entries.append((marker_type, marker_pos, mr))
+                draw_marker_pin(
+                    label_layer,
+                    marker_pos,
+                    color=pin_color,
+                    alpha=alpha,
+                    orientation=marker_type,
+                )
+                pygame.draw.circle(
+                    label_layer,
+                    (*pin_color, alpha),
+                    marker_pos,
+                    radius,
+                )
+                if hovered:
+                    if dist_to_mouse < hovered_distance:
+                        hovered_distance = dist_to_mouse
+                        hovered_marker = (marker_type, marker_pos, mr)
+                    pygame.draw.circle(
+                        label_layer,
+                        (*pin_color, int(alpha * 0.4)),
+                        marker_pos,
+                        radius + 4,
+                        1,
+                    )
+                labels_drawn = True
+
+        visible_labels: list[tuple[str, tuple[int, int], float, bool]] = []
+        for entry in pinned_label_entries:
+            visible_labels.append((*entry, True))
+        if hovered_marker is not None:
+            if not any(entry[0] == hovered_marker[0] for entry in pinned_label_entries):
+                visible_labels.append((*hovered_marker, False))
+
+        for marker_type, marker_pos, mr, is_pinned_label in visible_labels:
+            render_marker_label(
+                label_layer,
+                marker_type,
+                marker_pos,
+                mr,
+                pinned=is_pinned_label,
+            )
+        if labels_drawn:
+            screen.blit(label_layer, (0, 0))
+
+        if pin_feedback_text is not None:
+            elapsed_feedback = now_time - pin_feedback_time
+            if elapsed_feedback < MARKER_PIN_FEEDBACK_DURATION:
+                fade = clamp(1.0 - elapsed_feedback / MARKER_PIN_FEEDBACK_DURATION, 0.0, 1.0)
+                feedback_alpha = int(255 * fade)
+                feedback_text_surf = scenario_font.render(pin_feedback_text, True, LABEL_TEXT_COLOR)
+                if feedback_alpha < 255:
+                    feedback_text_surf = feedback_text_surf.copy()
+                    feedback_text_surf.set_alpha(feedback_alpha)
+                padding_x = 18
+                padding_y = 8
+                bubble_width = feedback_text_surf.get_width() + padding_x * 2
+                bubble_height = feedback_text_surf.get_height() + padding_y * 2
+                bubble = pygame.Surface((bubble_width, bubble_height), pygame.SRCALPHA)
+                pygame.draw.rect(
+                    bubble,
+                    (*LABEL_MARKER_PINNED_GLOW_COLOR, int(feedback_alpha * 0.45)),
+                    bubble.get_rect(),
+                    border_radius=18,
+                )
+                bubble.blit(feedback_text_surf, (padding_x, padding_y))
+                bubble_rect = bubble.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.18)))
+                screen.blit(bubble, bubble_rect)
+            else:
+                pin_feedback_text = None
 
         # HUD
-        rmag = np.linalg.norm(r)
-        vmag = np.linalg.norm(v)
+        vmag = float(np.linalg.norm(v))
         eps = energy_specific(r, v)
         e = eccentricity(r, v)
+        altitude_km = (rmag - EARTH_RADIUS) / 1_000.0
+        scenario = get_current_scenario()
         hud_lines = [
-            f"t = {t_sim:,.0f} s    (speed: {real_time_speed:.2f}x)",
-            f"|r| = {rmag/1e6:.2f} Mm    |v| = {vmag:,.1f} m/s",
-            f"energy = {eps: .3e} J/kg    e = {e:.4f}",
-            "SPACE: paus | R: reset | T: trail | +/-: zoom | C: kamera",
-            "←/→: -/+ 1.5x speed   ↑/↓: ×2/÷2 speed   ESC: quit",
-            "Knapparna till vänster speglar kontrollerna",
-            "Kamera-knappen eller C växlar fokus mellan jord och satellit",
+            f"Scenario: {scenario.name}",
+            f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}",
+            f"alt {altitude_km:,.1f} km",
+            f"|v| {vmag:,.1f} m/s   e {e:.3f}",
+            f"ε {eps: .2e} J/kg",
         ]
-        y = 10
-        for line in hud_lines:
-            draw_text_with_shadow(screen, font, line, (10, y))
-            y += 24
+        padding_x = 16
+        padding_y = 14
+        line_height = font.get_linesize()
+        hud_width = max(font.size(line)[0] for line in hud_lines) + padding_x * 2
+        hud_height = line_height * len(hud_lines) + padding_y
+        hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
+        pygame.draw.rect(
+            hud_surface,
+            LABEL_BACKGROUND_COLOR,
+            hud_surface.get_rect(),
+            border_radius=14,
+        )
+        for index, line in enumerate(hud_lines):
+            text_surf = font.render(line, True, HUD_TEXT_COLOR)
+            if HUD_TEXT_ALPHA < 255:
+                text_surf.set_alpha(HUD_TEXT_ALPHA)
+            hud_surface.blit(
+                text_surf,
+                (padding_x, int(padding_y / 2) + index * line_height),
+            )
+        screen.blit(hud_surface, (20, 20))
 
         for btn in sim_buttons:
-            btn.draw(screen, font)
+            btn.draw(screen, font, mouse_pos)
+
+        panel_lines = [scenario_panel_title, *scenario_help_lines]
+        if panel_lines:
+            panel_padding = 14
+            line_height = scenario_font.get_linesize()
+            panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
+            panel_height = line_height * len(panel_lines) + panel_padding * 2
+            panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+            pygame.draw.rect(
+                panel_surface,
+                LABEL_BACKGROUND_COLOR,
+                panel_surface.get_rect(),
+                border_radius=12,
+            )
+            y = panel_padding
+            for idx, line in enumerate(panel_lines):
+                if idx == 0:
+                    color = HUD_TEXT_COLOR
+                else:
+                    scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
+                    color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                text_surf = scenario_font.render(line, True, color)
+                panel_surface.blit(text_surf, (panel_padding, y))
+                y += line_height
+            panel_rect = panel_surface.get_rect()
+            panel_rect.topleft = (20, HEIGHT - panel_height - 20)
+            screen.blit(panel_surface, panel_rect)
+
+        if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
+            flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
+            flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
+            screen.blit(flash_surf, flash_rect)
+
+        fps_value = clock.get_fps()
+        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
+        if FPS_TEXT_ALPHA < 255:
+            fps_text.set_alpha(FPS_TEXT_ALPHA)
+        fps_rect = fps_text.get_rect(bottomright=(WIDTH - 16, HEIGHT - 16))
+        screen.blit(fps_text, fps_rect)
 
         pygame.display.flip()
         clock.tick()
