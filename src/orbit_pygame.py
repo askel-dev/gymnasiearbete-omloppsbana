@@ -80,8 +80,10 @@ def _earth_surface(radius: int) -> pygame.Surface:
 def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
     if radius <= 0:
         return
-    effective_radius = min(radius, MAX_EARTH_SURFACE_RADIUS)
-    earth_surface = _earth_surface(effective_radius)
+    cached_radius = min(radius, MAX_EARTH_SURFACE_RADIUS)
+    if radius > cached_radius:
+        pygame.draw.circle(surface, EARTH_CORE_COLOR, position, radius)
+    earth_surface = _earth_surface(cached_radius)
     rect = earth_surface.get_rect(center=position)
     surface.blit(earth_surface, rect)
 
