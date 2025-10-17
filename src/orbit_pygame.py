@@ -1126,10 +1126,13 @@ def main():
         return None
 
     def refresh_pinned_marker(marker_type: str) -> None:
+        if marker_type not in pinned_markers:
+            return
+
         latest = get_latest_marker(marker_type)
         if latest is not None:
             pinned_markers[marker_type] = latest
-        elif marker_type in pinned_markers:
+        else:
             del pinned_markers[marker_type]
 
     def marker_hit_test(mouse_pos: tuple[int, int]) -> str | None:
