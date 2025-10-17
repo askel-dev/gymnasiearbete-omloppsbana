@@ -97,22 +97,35 @@ def _planet_surface(radius: int) -> pygame.Surface:
 def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
     if radius <= 0:
         return
+    earth_surface = _earth_surface(radius)
+    rect = earth_surface.get_rect(center=position)
+    surface.blit(earth_surface, rect)
+
+
+@lru_cache(maxsize=256)
+def _earth_surface(radius: int) -> pygame.Surface:
+    if radius <= 0:
+        return pygame.Surface((1, 1), pygame.SRCALPHA)
+
     bucket_size = 4
     bucketed_radius = max(1, ((radius + bucket_size // 2) // bucket_size) * bucket_size)
 
-    earth_surface = _planet_surface(bucketed_radius)
+    base_surface = _planet_surface(bucketed_radius)
 
-    if bucketed_radius != radius:
-        scale = radius / bucketed_radius
-        width, height = earth_surface.get_size()
-        scaled_size = (
-            max(1, int(round(width * scale))),
-            max(1, int(round(height * scale))),
-        )
-        if scaled_size != earth_surface.get_size():
-            earth_surface = pygame.transform.smoothscale(earth_surface, scaled_size)
-    rect = earth_surface.get_rect(center=position)
-    surface.blit(earth_surface, rect)
+    if bucketed_radius == radius:
+        return base_surface
+
+    scale = radius / bucketed_radius
+    width, height = base_surface.get_size()
+    scaled_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+
+    if scaled_size == base_surface.get_size():
+        return base_surface
+
+    return pygame.transform.smoothscale(base_surface, scaled_size)
 
 
 @lru_cache(maxsize=64)
