@@ -327,6 +327,117 @@ def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: floa
         surface.blit(star_surface, (sx - radius, sy - radius))
 
 
+def _format_megameters(value_m: float) -> str:
+    value_mm = value_m / 1_000_000.0
+    abs_mm = abs(value_mm)
+    if abs_mm >= 1000:
+        text = f"{value_mm:,.0f}"
+    elif abs_mm >= 100:
+        text = f"{value_mm:,.0f}"
+    elif abs_mm >= 10:
+        text = f"{value_mm:,.1f}"
+    else:
+        text = f"{value_mm:,.2f}"
+    return text.rstrip("0").rstrip(".")
+
+
+def draw_coordinate_grid(
+    surface: pygame.Surface,
+    ppm: float,
+    camera_center: tuple[float, float],
+    *,
+    tick_font: pygame.font.Font,
+    axis_font: pygame.font.Font,
+) -> None:
+    if ppm <= 0.0:
+        return
+
+    spacing = GRID_SPACING_METERS
+    spacing_px = spacing * ppm
+    if spacing_px <= 0.0:
+        return
+
+    if spacing_px < GRID_MIN_PIXEL_SPACING:
+        multiplier = max(1, math.ceil(GRID_MIN_PIXEL_SPACING / spacing_px))
+        spacing *= multiplier
+        spacing_px = spacing * ppm
+        if spacing_px < GRID_MIN_PIXEL_SPACING:
+            return
+
+    width, height = surface.get_size()
+    if width <= 0 or height <= 0:
+        return
+
+    cx, cy = camera_center
+    half_width_world = width / (2.0 * ppm)
+    half_height_world = height / (2.0 * ppm)
+    world_left = cx - half_width_world
+    world_right = cx + half_width_world
+    world_bottom = cy - half_height_world
+    world_top = cy + half_height_world
+
+    line_color = (*GRID_LINE_COLOR, GRID_LINE_ALPHA)
+
+    start_x = math.floor(world_left / spacing) * spacing
+    max_vertical = int(math.ceil((world_right - world_left) / spacing)) + 3
+    for i in range(max_vertical):
+        x_world = start_x + i * spacing
+        if x_world > world_right + spacing:
+            break
+        sx, _ = world_to_screen(x_world, cy, ppm, camera_center)
+        if -width <= sx <= 2 * width:
+            pygame.draw.line(surface, line_color, (sx, 0), (sx, height), 1)
+            if 0 <= sx <= width and GRID_LABEL_MARGIN < sx < width - 140:
+                label_text = _format_megameters(x_world)
+                if label_text:
+                    label_surf = tick_font.render(label_text, True, GRID_LABEL_COLOR)
+                    if GRID_LABEL_ALPHA < 255:
+                        label_surf = label_surf.copy()
+                        label_surf.set_alpha(GRID_LABEL_ALPHA)
+                    rect = label_surf.get_rect()
+                    rect.midtop = (sx, GRID_LABEL_MARGIN)
+                    if rect.bottom <= height:
+                        surface.blit(label_surf, rect)
+
+    start_y = math.floor(world_bottom / spacing) * spacing
+    max_horizontal = int(math.ceil((world_top - world_bottom) / spacing)) + 3
+    for i in range(max_horizontal):
+        y_world = start_y + i * spacing
+        if y_world > world_top + spacing:
+            break
+        _, sy = world_to_screen(cx, y_world, ppm, camera_center)
+        if -height <= sy <= 2 * height:
+            pygame.draw.line(surface, line_color, (0, sy), (width, sy), 1)
+            if 0 <= sy <= height and GRID_LABEL_MARGIN * 2 < sy < height - GRID_LABEL_MARGIN:
+                label_text = _format_megameters(y_world)
+                if label_text:
+                    label_surf = tick_font.render(label_text, True, GRID_LABEL_COLOR)
+                    if GRID_LABEL_ALPHA < 255:
+                        label_surf = label_surf.copy()
+                        label_surf.set_alpha(GRID_LABEL_ALPHA)
+                    rect = label_surf.get_rect()
+                    rect.midright = (width - GRID_LABEL_MARGIN, sy)
+                    if rect.left >= 0:
+                        surface.blit(label_surf, rect)
+
+    axis_color = GRID_LABEL_COLOR
+    axis_label = axis_font.render("X [Mm]", True, axis_color)
+    if GRID_AXIS_LABEL_ALPHA < 255:
+        axis_label = axis_label.copy()
+        axis_label.set_alpha(GRID_AXIS_LABEL_ALPHA)
+    axis_rect = axis_label.get_rect()
+    axis_rect.bottomright = (width - GRID_LABEL_MARGIN, height - GRID_LABEL_MARGIN)
+    surface.blit(axis_label, axis_rect)
+
+    y_axis_label = axis_font.render("Y [Mm]", True, axis_color)
+    if GRID_AXIS_LABEL_ALPHA < 255:
+        y_axis_label = y_axis_label.copy()
+        y_axis_label.set_alpha(GRID_AXIS_LABEL_ALPHA)
+    y_axis_rect = y_axis_label.get_rect()
+    y_axis_rect.topright = (width - GRID_LABEL_MARGIN, GRID_LABEL_MARGIN)
+    surface.blit(y_axis_label, y_axis_rect)
+
+
 @dataclass
 class ParallaxLayer:
     surface: pygame.Surface
@@ -570,6 +681,15 @@ MARKER_PIN_FEEDBACK_DURATION = 1.6
 FPS_TEXT_ALPHA = int(255 * 0.6)
 STARFIELD_PARALLAX = 0.12
 
+GRID_SPACING_METERS = 1_000_000.0
+GRID_MIN_PIXEL_SPACING = 42.0
+GRID_LINE_COLOR = (200, 208, 220)
+GRID_LINE_ALPHA = 40
+GRID_LABEL_COLOR = (208, 216, 228)
+GRID_LABEL_ALPHA = 180
+GRID_AXIS_LABEL_ALPHA = 160
+GRID_LABEL_MARGIN = 10
+
 STARFIELD: list[dict[str, object]] = []
 MENU_PLANET_IMAGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "assets", "menu_planet.png"
@@ -808,10 +928,13 @@ def main():
     trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
     orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
     label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+    grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 18)
     scenario_font = pygame.font.SysFont("consolas", 16)
+    grid_label_font = pygame.font.SysFont("consolas", 14)
+    grid_axis_font = pygame.font.SysFont("consolas", 16)
 
     def render_marker_label(
         surface: pygame.Surface,
@@ -999,6 +1122,7 @@ def main():
     ppm = PIXELS_PER_METER
     ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
+    grid_overlay_enabled = False
     camera_mode = "earth"
     camera_center = np.array([0.0, 0.0], dtype=float)
     camera_target = np.array([0.0, 0.0], dtype=float)
@@ -1299,10 +1423,13 @@ def main():
             trail_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
             orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
             label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+            grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
         trail_surface.fill((0, 0, 0, 0))
         orbit_layer.fill((0, 0, 0, 0))
         label_layer.fill((0, 0, 0, 0))
+        if grid_overlay_enabled:
+            grid_surface.fill((0, 0, 0, 0))
         trail_drawn = False
         orbit_drawn = False
         labels_drawn = False
@@ -1316,6 +1443,9 @@ def main():
                     continue
                 if event.key in scenario_shortcut_map:
                     set_scenario(scenario_shortcut_map[event.key])
+                    continue
+                if event.key == pygame.K_g:
+                    grid_overlay_enabled = not grid_overlay_enabled
                     continue
                 if state == "running":
                     if event.key == pygame.K_SPACE:
@@ -1573,6 +1703,15 @@ def main():
         draw_starfield(screen, camera_center, ppm)
 
         camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
+        if grid_overlay_enabled:
+            draw_coordinate_grid(
+                grid_surface,
+                ppm,
+                camera_center_tuple,
+                tick_font=grid_label_font,
+                axis_font=grid_axis_font,
+            )
+            screen.blit(grid_surface, (0, 0))
         mouse_pos = pygame.mouse.get_pos()
         rmag = float(np.linalg.norm(r))
         earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
