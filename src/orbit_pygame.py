@@ -57,19 +57,31 @@ def create_radial_surface(
 
 @lru_cache(maxsize=128)
 def _earth_surface(radius: int) -> pygame.Surface:
-    glow_radius = max(radius + 20, int(radius * 1.4))
+    effective_radius = min(radius, MAX_EARTH_SURFACE_RADIUS)
+    glow_radius = max(
+        effective_radius,
+        min(
+            MAX_EARTH_GLOW_RADIUS,
+            max(effective_radius + EARTH_GLOW_MARGIN, int(effective_radius * EARTH_GLOW_SCALE)),
+        ),
+    )
     surface_size = glow_radius * 2
     surface = pygame.Surface((surface_size, surface_size), pygame.SRCALPHA)
-    glow_surface = create_radial_surface(glow_radius, EARTH_CORE_COLOR + (255,), EARTH_GLOW_COLOR + (0,))
+    glow_surface = create_radial_surface(
+        glow_radius,
+        EARTH_CORE_COLOR + (255,),
+        EARTH_GLOW_COLOR + (0,),
+    )
     surface.blit(glow_surface, (0, 0))
-    pygame.draw.circle(surface, EARTH_CORE_COLOR, (glow_radius, glow_radius), radius)
+    pygame.draw.circle(surface, EARTH_CORE_COLOR, (glow_radius, glow_radius), effective_radius)
     return surface
 
 
 def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
     if radius <= 0:
         return
-    earth_surface = _earth_surface(radius)
+    effective_radius = min(radius, MAX_EARTH_SURFACE_RADIUS)
+    earth_surface = _earth_surface(effective_radius)
     rect = earth_surface.get_rect(center=position)
     surface.blit(earth_surface, rect)
 
@@ -177,6 +189,10 @@ MENU_TITLE_COLOR = (220, 230, 255)
 MENU_SUBTITLE_COLOR = (150, 165, 200)
 PERICENTER_COLOR = (255, 180, 120)
 APOCENTER_COLOR = (120, 200, 255)
+MAX_EARTH_SURFACE_RADIUS = int(math.hypot(WIDTH, HEIGHT))
+MAX_EARTH_GLOW_RADIUS = MAX_EARTH_SURFACE_RADIUS + max(WIDTH, HEIGHT)
+EARTH_GLOW_MARGIN = 20
+EARTH_GLOW_SCALE = 1.4
 
 STARFIELD: list[dict[str, float | tuple[int, int]]] = []
 
