@@ -58,60 +58,48 @@ def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) ->
 
 
 @lru_cache(maxsize=128)
-def _earth_surface(radius: int) -> pygame.Surface:
-    effective_radius = min(radius, MAX_EARTH_SURFACE_RADIUS)
-    glow_radius = max(
-        effective_radius,
-        min(
-            MAX_EARTH_GLOW_RADIUS,
-            max(effective_radius + EARTH_GLOW_MARGIN, int(effective_radius * EARTH_GLOW_SCALE)),
-        ),
-    )
-    surface_size = glow_radius * 2
-    surface = pygame.Surface((surface_size, surface_size), pygame.SRCALPHA)
-    glow_surface = create_radial_surface(
-        glow_radius,
-        EARTH_CORE_COLOR + (255,),
-        EARTH_GLOW_COLOR + (0,),
-    )
-    surface.blit(glow_surface, (0, 0))
-    pygame.draw.circle(surface, EARTH_CORE_COLOR, (glow_radius, glow_radius), effective_radius)
+def _planet_surface(radius: int) -> pygame.Surface:
+    if radius <= 0:
+        return pygame.Surface((1, 1), pygame.SRCALPHA)
+
+    outer_radius = max(radius * 3, radius + 12)
+    size = outer_radius * 2
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    center = outer_radius
+
+    inner_halo_radius = max(radius * 2, radius + 4)
+    outer_halo_radius = max(radius * 3, inner_halo_radius + 4)
+
+    pygame.draw.circle(surface, INNER_HALO_COLOR, (center, center), inner_halo_radius)
+    pygame.draw.circle(surface, OUTER_HALO_COLOR, (center, center), outer_halo_radius)
+
+    diameter = radius * 2
+    planet_surface = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+    planet_center = radius - 0.5
+    for y in range(diameter):
+        for x in range(diameter):
+            dx = x - planet_center
+            dy = y - planet_center
+            dist = math.hypot(dx, dy)
+            if dist > radius:
+                continue
+            t = dist / max(1, radius)
+            if t <= 0.5:
+                color = _lerp_color(PLANET_COLOR_CORE, PLANET_COLOR_MID, t / 0.5)
+            else:
+                color = _lerp_color(PLANET_COLOR_MID, PLANET_COLOR_EDGE, (t - 0.5) / 0.5)
+            planet_surface.set_at((x, y), (*color, 255))
+
+    surface.blit(planet_surface, (center - radius, center - radius))
     return surface
 
 
 def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
     if radius <= 0:
         return
-    effective_radius = min(radius, MAX_EARTH_SURFACE_RADIUS)
-    earth_surface = _earth_surface(effective_radius)
+    earth_surface = _planet_surface(radius)
     rect = earth_surface.get_rect(center=position)
     surface.blit(earth_surface, rect)
-
-
-@lru_cache(maxsize=256)
-def _earth_surface(radius: int) -> pygame.Surface:
-    if radius <= 0:
-        return pygame.Surface((1, 1), pygame.SRCALPHA)
-
-    bucket_size = 4
-    bucketed_radius = max(1, ((radius + bucket_size // 2) // bucket_size) * bucket_size)
-
-    base_surface = _planet_surface(bucketed_radius)
-
-    if bucketed_radius == radius:
-        return base_surface
-
-    scale = radius / bucketed_radius
-    width, height = base_surface.get_size()
-    scaled_size = (
-        max(1, int(round(width * scale))),
-        max(1, int(round(height * scale))),
-    )
-
-    if scaled_size == base_surface.get_size():
-        return base_surface
-
-    return pygame.transform.smoothscale(base_surface, scaled_size)
 
 
 @lru_cache(maxsize=64)
@@ -138,7 +126,7 @@ def _satellite_surface(radius: int) -> pygame.Surface:
             rim = min(1.0, (t ** 1.5) * (dot ** 2) * 2.0)
             color = _lerp_color(base_color, SAT_HIGHLIGHT_COLOR, rim)
             surface.set_at((x, y), (*color, 255))
-    return surface.convert_alpha()
+    return surface
 
 
 def draw_satellite(
@@ -317,7 +305,6 @@ def generate_starfield(num_stars: int) -> list[dict[str, object]]:
             (radius, radius),
             radius,
         )
-        star_surface = star_surface.convert_alpha()
         stars.append(
             {
                 "pos": (x, y),
@@ -331,32 +318,13 @@ def generate_starfield(num_stars: int) -> list[dict[str, object]]:
 def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: float) -> None:
     offset_x = camera_center[0] * ppm * STARFIELD_PARALLAX
     offset_y = camera_center[1] * ppm * STARFIELD_PARALLAX
-    width = WIDTH
-    height = HEIGHT
-    if width == 0 or height == 0:
-        return
-
-    offset_x_mod = offset_x % width
-    offset_y_mod = offset_y % height
-    blit = surface.blit
     for star in STARFIELD:
         base_x, base_y = star["pos"]  # type: ignore[index]
         star_surface = star["surface"]  # type: ignore[index]
         radius = star["radius"]  # type: ignore[index]
-        sx = base_x - offset_x_mod
-        sy = base_y + offset_y_mod
-
-        if sx < 0:
-            sx += width
-        elif sx >= width:
-            sx -= width
-
-        if sy < 0:
-            sy += height
-        elif sy >= height:
-            sy -= height
-
-        blit(star_surface, (int(sx) - radius, int(sy) - radius))
+        sx = int((base_x - offset_x) % WIDTH)
+        sy = int((base_y + offset_y) % HEIGHT)
+        surface.blit(star_surface, (sx - radius, sy - radius))
 
 
 @dataclass
@@ -432,7 +400,6 @@ def generate_menu_parallax_layers(width: int, height: int) -> list[ParallaxLayer
             x = rng.randint(0, width)
             y = rng.randint(0, height)
             pygame.draw.circle(layer_surface, color, (x, y), radius)
-        layer_surface = layer_surface.convert_alpha()
         layer = ParallaxLayer(
             surface=layer_surface,
             velocity=(
@@ -540,32 +507,88 @@ MAX_RENDERED_ORBIT_POINTS = 800
 # Dessa värden sätts om efter att displayen initierats, men behöver
 # startvärden för typkontroller och tooling.
 WIDTH, HEIGHT = 1000, 800
-BG_COLOR_TOP = (5, 10, 25)
-BG_COLOR_BOTTOM = (10, 30, 60)
-EARTH_CORE_COLOR = (70, 170, 255)
-EARTH_GLOW_COLOR = (30, 110, 200)
-SAT_COLOR = (255, 255, 230)
-SAT_HALO_COLOR = (255, 200, 120, 120)
-TRAIL_COLOR = (140, 240, 200)
-TRAIL_COLOR_ALPHA = (140, 240, 200, 220)
-HUD_TEXT_COLOR = (245, 245, 245)
-HUD_SHADOW_COLOR = (0, 0, 0, 160)
-VEL_COLOR = (255, 120, 120)
-BUTTON_COLOR = (35, 55, 90)
-BUTTON_HOVER_COLOR = (70, 110, 160)
-BUTTON_TEXT_COLOR = (240, 245, 250)
-MENU_TITLE_COLOR = (220, 230, 255)
-MENU_SUBTITLE_COLOR = (150, 165, 200)
-PERICENTER_COLOR = (255, 180, 120)
-APOCENTER_COLOR = (120, 200, 255)
-MAX_EARTH_SURFACE_RADIUS = int(math.hypot(WIDTH, HEIGHT))
-MAX_EARTH_GLOW_RADIUS = MAX_EARTH_SURFACE_RADIUS + max(WIDTH, HEIGHT)
-EARTH_GLOW_MARGIN = 20
-EARTH_GLOW_SCALE = 1.4
+BG_COLOR_TOP = (0, 17, 40)
+BG_COLOR_BOTTOM = (0, 34, 72)
+PLANET_COLOR_CORE = (255, 183, 77)
+PLANET_COLOR_MID = (240, 98, 146)
+PLANET_COLOR_EDGE = (124, 77, 255)
+INNER_HALO_COLOR = (124, 77, 255, int(255 * 0.10))
+OUTER_HALO_COLOR = (46, 209, 195, int(255 * 0.08))
+SAT_COLOR_CORE = (65, 224, 162)
+SAT_COLOR_EDGE = (42, 170, 226)
+SAT_HIGHLIGHT_COLOR = (206, 255, 250)
+SAT_LIGHT_DIR = (-0.55, -0.4)
+SAT_SHADOW_COLOR = (6, 12, 24, 120)
+SAT_BASE_RADIUS = 6
+HUD_TEXT_COLOR = (234, 241, 255)
+HUD_TEXT_ALPHA = 255
+HUD_SHADOW_COLOR = (10, 15, 30, 120)
+ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
+ORBIT_SECONDARY_COLOR = (220, 236, 255, 140)
+ORBIT_LINE_WIDTH = 2
+TRAIL_COLOR = (46, 209, 195)
+TRAIL_MAX_DURATION = 1.0
+VEL_COLOR = (46, 209, 195)
+BUTTON_COLOR = (8, 32, 64, int(255 * 0.78))
+BUTTON_HOVER_COLOR = (18, 52, 94, int(255 * 0.88))
+BUTTON_TEXT_COLOR = (234, 241, 255)
+BUTTON_BORDER_COLOR = (88, 140, 255, int(255 * 0.55))
+BUTTON_HOVER_BORDER_COLOR = (118, 180, 255, int(255 * 0.8))
+BUTTON_RADIUS = 18
+MENU_TITLE_COLOR = (234, 241, 255)
+MENU_SUBTITLE_COLOR = (180, 198, 228)
+MENU_BUTTON_COLOR = (9, 44, 92, 220)
+MENU_BUTTON_HOVER_COLOR = (24, 74, 140, 235)
+MENU_BUTTON_BORDER_COLOR = (255, 255, 255, 50)
+MENU_BUTTON_TEXT_COLOR = (234, 241, 255)
+MENU_BUTTON_RADIUS = 20
+MENU_PLANET_GLOW_COLOR = (88, 146, 255, 70)
+MENU_PLANET_RING_COLOR = (93, 200, 255, 200)
+MENU_PLANET_RING_WIDTH = 4
+MENU_PLANET_ORBIT_OFFSET = 18
+MENU_PLANET_PLACEHOLDER_ALPHA = 220
+LABEL_BACKGROUND_COLOR = (12, 18, 30, int(255 * 0.18))
+LABEL_MARKER_COLOR = (46, 209, 195)
+LABEL_TEXT_COLOR = (234, 241, 255)
+LABEL_MARKER_ALPHA = int(255 * 0.9)
+LABEL_MARKER_HOVER_RADIUS = 22
+LABEL_MARKER_HOVER_ALPHA = 255
+LABEL_MARKER_HOVER_RADIUS_PIXELS = 6
+LABEL_MARKER_PIN_WIDTH = 10
+LABEL_MARKER_PIN_HEIGHT = 16
+LABEL_MARKER_PIN_OFFSET = 6
+LABEL_MARKER_PINNED_PIN_COLOR = (248, 252, 255)
+LABEL_MARKER_PINNED_GLOW_COLOR = (255, 255, 255)
+LABEL_MARKER_PINNED_GLOW_ALPHA = 90
+LABEL_MARKER_PINNED_OUTLINE_ALPHA = 210
+LABEL_MARKER_PINNED_RADIUS_PIXELS = 8
+LABEL_MARKER_PINNED_GLOW_RADIUS = 14
+LABEL_PINNED_BACKGROUND_COLOR = (16, 28, 46, int(255 * 0.42))
+LABEL_PINNED_BADGE_COLOR = (255, 255, 255, 220)
+LABEL_PINNED_BADGE_TEXT_COLOR = (18, 36, 64)
+MARKER_PIN_FEEDBACK_DURATION = 1.6
+FPS_TEXT_ALPHA = int(255 * 0.6)
+STARFIELD_PARALLAX = 0.12
 
-STARFIELD: list[dict[str, float | tuple[int, int]]] = []
+STARFIELD: list[dict[str, object]] = []
+MENU_PLANET_IMAGE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "assets", "menu_planet.png"
+)
+_MENU_PLANET_CACHE: dict[tuple[int, int], pygame.Surface] = {}
 
-PIXELS_PER_METER = 0.25 * (min(WIDTH, HEIGHT) / (2.0 * np.linalg.norm(R0)))
+def compute_pixels_per_meter(width: int, height: int) -> float:
+    return 0.25 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
+
+
+def update_display_metrics(width: int, height: int) -> None:
+    global WIDTH, HEIGHT, PIXELS_PER_METER
+
+    WIDTH = width
+    HEIGHT = height
+    PIXELS_PER_METER = compute_pixels_per_meter(width, height)
+
+
+PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
 MIN_PPM = 1e-7
 MAX_PPM = 1e-2
 
