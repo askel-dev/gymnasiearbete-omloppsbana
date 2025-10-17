@@ -91,7 +91,7 @@ def _planet_surface(radius: int) -> pygame.Surface:
             planet_surface.set_at((x, y), (*color, 255))
 
     surface.blit(planet_surface, (center - radius, center - radius))
-    return surface
+    return surface.convert_alpha()
 
 
 def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
@@ -139,7 +139,7 @@ def _satellite_surface(radius: int) -> pygame.Surface:
             rim = min(1.0, (t ** 1.5) * (dot ** 2) * 2.0)
             color = _lerp_color(base_color, SAT_HIGHLIGHT_COLOR, rim)
             surface.set_at((x, y), (*color, 255))
-    return surface
+    return surface.convert_alpha()
 
 
 def draw_satellite(
@@ -318,6 +318,7 @@ def generate_starfield(num_stars: int) -> list[dict[str, object]]:
             (radius, radius),
             radius,
         )
+        star_surface = star_surface.convert_alpha()
         stars.append(
             {
                 "pos": (x, y),
@@ -331,13 +332,32 @@ def generate_starfield(num_stars: int) -> list[dict[str, object]]:
 def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: float) -> None:
     offset_x = camera_center[0] * ppm * STARFIELD_PARALLAX
     offset_y = camera_center[1] * ppm * STARFIELD_PARALLAX
+    width = WIDTH
+    height = HEIGHT
+    if width == 0 or height == 0:
+        return
+
+    offset_x_mod = offset_x % width
+    offset_y_mod = offset_y % height
+    blit = surface.blit
     for star in STARFIELD:
         base_x, base_y = star["pos"]  # type: ignore[index]
         star_surface = star["surface"]  # type: ignore[index]
         radius = star["radius"]  # type: ignore[index]
-        sx = int((base_x - offset_x) % WIDTH)
-        sy = int((base_y + offset_y) % HEIGHT)
-        surface.blit(star_surface, (sx - radius, sy - radius))
+        sx = base_x - offset_x_mod
+        sy = base_y + offset_y_mod
+
+        if sx < 0:
+            sx += width
+        elif sx >= width:
+            sx -= width
+
+        if sy < 0:
+            sy += height
+        elif sy >= height:
+            sy -= height
+
+        blit(star_surface, (int(sx) - radius, int(sy) - radius))
 
 
 @dataclass
@@ -413,6 +433,7 @@ def generate_menu_parallax_layers(width: int, height: int) -> list[ParallaxLayer
             x = rng.randint(0, width)
             y = rng.randint(0, height)
             pygame.draw.circle(layer_surface, color, (x, y), radius)
+        layer_surface = layer_surface.convert_alpha()
         layer = ParallaxLayer(
             surface=layer_surface,
             velocity=(
