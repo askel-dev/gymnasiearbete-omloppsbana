@@ -101,7 +101,7 @@ def _get_scaled_earth_sprite(diameter: int) -> pygame.Surface:
 
 def draw_earth(
     surface: pygame.Surface,
-    position: tuple[float, float],
+    position: tuple[int, int],
     radius: int,
 ) -> None:
     if radius <= 0:
@@ -109,7 +109,7 @@ def draw_earth(
 
     diameter = radius * 2
     sprite = _get_scaled_earth_sprite(diameter)
-    rect = sprite.get_rect(center=round_pos(position))
+    rect = sprite.get_rect(center=position)
     surface.blit(sprite, rect)
 
 
@@ -142,8 +142,8 @@ def _satellite_surface(radius: int) -> pygame.Surface:
 
 def draw_satellite(
     surface: pygame.Surface,
-    position: tuple[float, float],
-    planet_position: tuple[float, float] | None,
+    position: tuple[int, int],
+    planet_position: tuple[int, int] | None,
     radius: int,
 ) -> None:
     if radius <= 0:
@@ -155,8 +155,8 @@ def draw_satellite(
         distance = math.hypot(dx, dy)
         if distance != 0:
             offset_scale = radius * 0.6
-            offset_x = dx / distance * offset_scale
-            offset_y = dy / distance * offset_scale
+            offset_x = int(dx / distance * offset_scale)
+            offset_y = int(dy / distance * offset_scale)
         else:
             offset_x = offset_y = 0
         shadow_surface = pygame.Surface((radius * 4, radius * 4), pygame.SRCALPHA)
@@ -167,18 +167,18 @@ def draw_satellite(
             radius,
         )
         shadow_rect = shadow_surface.get_rect(
-            center=round_pos((position[0] + offset_x, position[1] + offset_y))
+            center=(position[0] + offset_x, position[1] + offset_y)
         )
         surface.blit(shadow_surface, shadow_rect)
 
     sat_surface = _satellite_surface(radius)
-    sat_rect = sat_surface.get_rect(center=round_pos(position))
+    sat_rect = sat_surface.get_rect(center=position)
     surface.blit(sat_surface, sat_rect)
 
 
 def draw_heating_glow(
     surface: pygame.Surface,
-    position: tuple[float, float],
+    position: tuple[int, int],
     radius: int,
     intensity: float,
 ) -> None:
@@ -204,13 +204,13 @@ def draw_heating_glow(
             (center, center),
             max(1, int(glow_radius * 0.55)),
         )
-    glow_rect = glow_surface.get_rect(center=round_pos(position))
+    glow_rect = glow_surface.get_rect(center=position)
     surface.blit(glow_surface, glow_rect)
 
 
 def draw_marker_pin(
     surface: pygame.Surface,
-    position: tuple[float, float],
+    position: tuple[int, int],
     *,
     color: tuple[int, int, int],
     alpha: int,
@@ -236,21 +236,21 @@ def draw_marker_pin(
     pygame.draw.polygon(
         surface,
         (*color, alpha),
-        [round_pos(base_left), round_pos(base_right), round_pos(tip)],
+        [base_left, base_right, tip],
     )
 
     pygame.draw.line(
         surface,
         (*color, min(255, int(alpha * 0.95))),
-        round_pos(position),
-        round_pos(tip),
+        position,
+        tip,
         2,
     )
 
 
 def draw_menu_planet(
     surface: pygame.Surface,
-    center: tuple[float, float],
+    center: tuple[int, int],
     diameter: int,
     *,
     image: pygame.Surface | None = None,
@@ -272,7 +272,7 @@ def draw_menu_planet(
         if scaled is None:
             scaled = pygame.transform.smoothscale(image, new_size).convert_alpha()
             _MENU_PLANET_CACHE[cache_key] = scaled
-        rect = scaled.get_rect(center=round_pos(center))
+        rect = scaled.get_rect(center=center)
         surface.blit(scaled, rect)
         return
 
@@ -284,40 +284,28 @@ def draw_menu_planet(
         (radius, radius),
         radius,
     )
-    surface.blit(
-        planet_surface, planet_surface.get_rect(center=round_pos(center))
-    )
+    surface.blit(planet_surface, planet_surface.get_rect(center=center))
 
 
 def draw_velocity_arrow(
     surface: pygame.Surface,
-    start: tuple[float, float],
-    end: tuple[float, float],
+    start: tuple[int, int],
+    end: tuple[int, int],
     head_length: int,
     head_angle_deg: float,
 ) -> None:
-    pygame.draw.line(
-        surface,
-        VEL_ARROW_COLOR,
-        round_pos(start),
-        round_pos(end),
-        2,
-    )
+    pygame.draw.line(surface, VEL_ARROW_COLOR, start, end, 2)
     angle = math.atan2(start[1] - end[1], end[0] - start[0])
     head_angle = math.radians(head_angle_deg)
     left = (
-        end[0] - head_length * math.cos(angle - head_angle),
-        end[1] + head_length * math.sin(angle - head_angle),
+        int(end[0] - head_length * math.cos(angle - head_angle)),
+        int(end[1] + head_length * math.sin(angle - head_angle)),
     )
     right = (
-        end[0] - head_length * math.cos(angle + head_angle),
-        end[1] + head_length * math.sin(angle + head_angle),
+        int(end[0] - head_length * math.cos(angle + head_angle)),
+        int(end[1] + head_length * math.sin(angle + head_angle)),
     )
-    pygame.draw.polygon(
-        surface,
-        VEL_ARROW_COLOR,
-        [round_pos(end), round_pos(left), round_pos(right)],
-    )
+    pygame.draw.polygon(surface, VEL_ARROW_COLOR, [end, left, right])
 
 
 def generate_starfield(num_stars: int) -> list[dict[str, object]]:
@@ -422,19 +410,13 @@ def draw_coordinate_grid(
         if x_world > world_right + spacing:
             break
         sx, _ = world_to_screen(x_world, cy, ppm, camera_center)
-        if 0.0 <= sx <= width:
-            draw_x = clamp(sx, 0.0, float(width))
+        if 0 <= sx <= width:
+            draw_x = int(clamp(sx, 0, width))
             is_origin_line = abs(x_world) < spacing * 0.5
             color = origin_line_color if is_origin_line else line_color
             width_px = origin_line_width if is_origin_line else 1
-            pygame.draw.line(
-                surface,
-                color,
-                round_pos((draw_x, 0.0)),
-                round_pos((draw_x, float(height))),
-                width_px,
-            )
-            if 0.0 <= sx <= width and GRID_LABEL_MARGIN < sx < width - 140:
+            pygame.draw.line(surface, color, (draw_x, 0), (draw_x, height), width_px)
+            if 0 <= sx <= width and GRID_LABEL_MARGIN < sx < width - 140:
                 label_text = _format_megameters(x_world)
                 if label_text:
                     label_surf = get_text_surface(
@@ -444,7 +426,7 @@ def draw_coordinate_grid(
                         label_surf = label_surf.copy()
                         label_surf.set_alpha(GRID_LABEL_ALPHA)
                     rect = label_surf.get_rect()
-                    rect.midtop = round_pos((sx, float(GRID_LABEL_MARGIN)))
+                    rect.midtop = (sx, GRID_LABEL_MARGIN)
                     if rect.bottom <= height:
                         surface.blit(label_surf, rect)
 
@@ -455,22 +437,13 @@ def draw_coordinate_grid(
         if y_world > world_top + spacing:
             break
         _, sy = world_to_screen(cx, y_world, ppm, camera_center)
-        if 0.0 <= sy <= height:
-            draw_y = clamp(sy, 0.0, float(height))
+        if 0 <= sy <= height:
+            draw_y = int(clamp(sy, 0, height))
             is_origin_line = abs(y_world) < spacing * 0.5
             color = origin_line_color if is_origin_line else line_color
             width_px = origin_line_width if is_origin_line else 1
-            pygame.draw.line(
-                surface,
-                color,
-                round_pos((0.0, draw_y)),
-                round_pos((float(width), draw_y)),
-                width_px,
-            )
-            if (
-                0.0 <= sy <= height
-                and GRID_LABEL_MARGIN * 2 < sy < height - GRID_LABEL_MARGIN
-            ):
+            pygame.draw.line(surface, color, (0, draw_y), (width, draw_y), width_px)
+            if 0 <= sy <= height and GRID_LABEL_MARGIN * 2 < sy < height - GRID_LABEL_MARGIN:
                 label_text = _format_megameters(y_world)
                 if label_text:
                     label_surf = get_text_surface(
@@ -480,9 +453,7 @@ def draw_coordinate_grid(
                         label_surf = label_surf.copy()
                         label_surf.set_alpha(GRID_LABEL_ALPHA)
                     rect = label_surf.get_rect()
-                    rect.midright = round_pos(
-                        (float(width - GRID_LABEL_MARGIN), sy)
-                    )
+                    rect.midright = (width - GRID_LABEL_MARGIN, sy)
                     if rect.left >= 0:
                         surface.blit(label_surf, rect)
 
@@ -874,21 +845,11 @@ def eccentricity(r, v):
     e_vec = np.cross(v3, h)/MU - r3/np.linalg.norm(r3)
     return np.linalg.norm(e_vec[:2])
 
-def world_to_screen(
-    x: float,
-    y: float,
-    ppm: float,
-    camera_center: tuple[float, float] = (0.0, 0.0),
-) -> tuple[float, float]:
+def world_to_screen(x, y, ppm, camera_center=(0.0, 0.0)):
     cx, cy = camera_center
-    sx = WIDTH * 0.5 + (x - cx) * ppm
-    sy = HEIGHT * 0.5 - (y - cy) * ppm
+    sx = WIDTH // 2 + int((x - cx) * ppm)
+    sy = HEIGHT // 2 - int((y - cy) * ppm)
     return sx, sy
-
-
-def round_pos(pos: tuple[float, float]) -> tuple[int, int]:
-    return (int(round(pos[0])), int(round(pos[1])))
-
 
 def clamp(val, lo, hi):
     return max(lo, min(hi, val))
@@ -903,17 +864,16 @@ def compute_satellite_radius(r_magnitude: float) -> int:
 def draw_orbit_line(
     surface: pygame.Surface,
     color: tuple[int, int, int] | tuple[int, int, int, int],
-    points: list[tuple[float, float]],
+    points: list[tuple[int, int]],
     width: int,
 ) -> None:
     if len(points) < 2:
         return
-    rounded_points = [round_pos(point) for point in points]
     if width <= 1:
-        pygame.draw.aalines(surface, color, False, rounded_points)
+        pygame.draw.aalines(surface, color, False, points)
     else:
-        pygame.draw.lines(surface, color, False, rounded_points, width)
-        pygame.draw.aalines(surface, color, False, rounded_points)
+        pygame.draw.lines(surface, color, False, points, width)
+        pygame.draw.aalines(surface, color, False, points)
 
 
 def downsample_points(
@@ -1113,7 +1073,7 @@ def main():
     def render_marker_label(
         surface: pygame.Surface,
         marker_type: str,
-        marker_pos: tuple[float, float],
+        marker_pos: tuple[int, int],
         radius_world: float,
         *,
         pinned: bool = False,
@@ -1138,18 +1098,16 @@ def main():
         anchor_y = marker_pos[1] + direction * line_length
 
         bg_rect = pygame.Rect(0, 0, bg_width, bg_height)
-        bg_rect.center = round_pos(
-            (
-                marker_pos[0],
-                anchor_y + direction * (bg_rect.height / 2 + 6),
-            )
+        bg_rect.center = (
+            marker_pos[0],
+            int(anchor_y + direction * (bg_rect.height / 2 + 6)),
         )
 
         pygame.draw.line(
             surface,
             (*connector_color, connector_alpha),
-            round_pos(marker_pos),
-            round_pos((marker_pos[0], anchor_y)),
+            marker_pos,
+            (marker_pos[0], anchor_y),
             2,
         )
 
@@ -2079,7 +2037,7 @@ def main():
                     pygame.draw.circle(
                         ring_surface,
                         (*SHOCK_RING_COLOR, ring_alpha),
-                        round_pos(ring_center),
+                        ring_center,
                         ring_radius_px,
                         ring_width,
                     )
@@ -2105,8 +2063,8 @@ def main():
                     dir_x = vx / vmag
                     dir_y = vy / vmag
                     arrow_end = (
-                        sat_pos[0] + dir_x * arrow_length,
-                        sat_pos[1] - dir_y * arrow_length,
+                        int(round(sat_pos[0] + dir_x * arrow_length)),
+                        int(round(sat_pos[1] - dir_y * arrow_length)),
                     )
                     head_length = int(max(4, min(VEL_ARROW_HEAD_LENGTH, arrow_length * 0.6)))
                     draw_velocity_arrow(
@@ -2145,9 +2103,9 @@ def main():
                 warning_rect = warning_bg.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.14)))
                 screen.blit(warning_bg, warning_rect)
 
-        hovered_marker: tuple[str, tuple[float, float], float] | None = None
+        hovered_marker: tuple[str, tuple[int, int], float] | None = None
         hovered_distance = float("inf")
-        pinned_label_entries: list[tuple[str, tuple[float, float], float]] = []
+        pinned_label_entries: list[tuple[str, tuple[int, int], float]] = []
         if orbit_markers:
             markers_snapshot = list(orbit_markers)
             latest_index: dict[str, int] = {}
@@ -2155,7 +2113,6 @@ def main():
                 latest_index[marker_type] = idx
             for idx, (marker_type, mx, my, mr) in enumerate(markers_snapshot):
                 marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
-                rounded_marker_pos = round_pos(marker_pos)
                 dist_to_mouse = math.hypot(
                     marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1]
                 )
@@ -2171,13 +2128,13 @@ def main():
                     pygame.draw.circle(
                         label_layer,
                         (*LABEL_MARKER_PINNED_GLOW_COLOR, LABEL_MARKER_PINNED_GLOW_ALPHA),
-                        rounded_marker_pos,
+                        marker_pos,
                         LABEL_MARKER_PINNED_GLOW_RADIUS,
                     )
                     pygame.draw.circle(
                         label_layer,
                         (*LABEL_MARKER_PINNED_GLOW_COLOR, LABEL_MARKER_PINNED_OUTLINE_ALPHA),
-                        rounded_marker_pos,
+                        marker_pos,
                         radius + 4,
                         2,
                     )
@@ -2192,7 +2149,7 @@ def main():
                 pygame.draw.circle(
                     label_layer,
                     (*pin_color, alpha),
-                    rounded_marker_pos,
+                    marker_pos,
                     radius,
                 )
                 if hovered:
@@ -2202,13 +2159,13 @@ def main():
                     pygame.draw.circle(
                         label_layer,
                         (*pin_color, int(alpha * 0.4)),
-                        rounded_marker_pos,
+                        marker_pos,
                         radius + 4,
                         1,
                     )
                 labels_drawn = True
 
-        visible_labels: list[tuple[str, tuple[float, float], float, bool]] = []
+        visible_labels: list[tuple[str, tuple[int, int], float, bool]] = []
         for entry in pinned_label_entries:
             visible_labels.append((*entry, True))
         if hovered_marker is not None:
