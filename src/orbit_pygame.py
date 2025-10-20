@@ -41,8 +41,9 @@ def draw_text_with_shadow(
     shadow: bool = False,
 ) -> None:
     text_surf = font.render(text, True, HUD_TEXT_COLOR)
-    if HUD_TEXT_ALPHA < 255:
-        text_surf.set_alpha(HUD_TEXT_ALPHA)
+    if CURRENT_HUD_ALPHA < 255:
+        text_surf = text_surf.copy()
+        text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
     if shadow:
         shadow_color = HUD_SHADOW_COLOR[:3]
         shadow_surf = font.render(text, True, shadow_color)
@@ -62,19 +63,8 @@ def _planet_surface(radius: int) -> pygame.Surface:
     if radius <= 0:
         return pygame.Surface((1, 1), pygame.SRCALPHA)
 
-    outer_radius = max(radius * 3, radius + 12)
-    size = outer_radius * 2
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    center = outer_radius
-
-    inner_halo_radius = max(radius * 2, radius + 4)
-    outer_halo_radius = max(radius * 3, inner_halo_radius + 4)
-
-    pygame.draw.circle(surface, INNER_HALO_COLOR, (center, center), inner_halo_radius)
-    pygame.draw.circle(surface, OUTER_HALO_COLOR, (center, center), outer_halo_radius)
-
     diameter = radius * 2
-    planet_surface = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+    surface = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
     planet_center = radius - 0.5
     for y in range(diameter):
         for x in range(diameter):
@@ -88,18 +78,36 @@ def _planet_surface(radius: int) -> pygame.Surface:
                 color = _lerp_color(PLANET_COLOR_CORE, PLANET_COLOR_MID, t / 0.5)
             else:
                 color = _lerp_color(PLANET_COLOR_MID, PLANET_COLOR_EDGE, (t - 0.5) / 0.5)
-            planet_surface.set_at((x, y), (*color, 255))
+            surface.set_at((x, y), (*color, 255))
 
-    surface.blit(planet_surface, (center - radius, center - radius))
     return surface
 
 
-def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
+def draw_earth(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    radius: int,
+    *,
+    atmosphere_thickness: int = 0,
+) -> None:
     if radius <= 0:
         return
     earth_surface = _planet_surface(radius)
     rect = earth_surface.get_rect(center=position)
     surface.blit(earth_surface, rect)
+    if atmosphere_thickness > 0:
+        ring_radius = radius + atmosphere_thickness
+        if ring_radius > 0:
+            ring_surface = pygame.Surface((ring_radius * 2, ring_radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                ring_surface,
+                ATMOSPHERE_RING_COLOR,
+                (ring_radius, ring_radius),
+                ring_radius,
+                atmosphere_thickness,
+            )
+            ring_rect = ring_surface.get_rect(center=position)
+            surface.blit(ring_surface, ring_rect)
 
 
 @lru_cache(maxsize=64)
@@ -163,6 +171,38 @@ def draw_satellite(
     sat_surface = _satellite_surface(radius)
     sat_rect = sat_surface.get_rect(center=position)
     surface.blit(sat_surface, sat_rect)
+
+
+def draw_heating_glow(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    radius: int,
+    intensity: float,
+) -> None:
+    if intensity <= 0.0 or radius <= 0:
+        return
+    intensity = clamp(intensity, 0.0, 1.0)
+    glow_radius = max(2, int(radius * (1.8 + ATM_GLOW_RADIUS_FACTOR * intensity)))
+    glow_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+    center = glow_radius
+    outer_alpha = int(ATM_GLOW_OUTER_ALPHA * intensity)
+    inner_alpha = int(ATM_GLOW_INNER_ALPHA * intensity)
+    if outer_alpha > 0:
+        pygame.draw.circle(
+            glow_surface,
+            (*ATM_GLOW_COLOR, outer_alpha),
+            (center, center),
+            glow_radius,
+        )
+    if inner_alpha > 0:
+        pygame.draw.circle(
+            glow_surface,
+            (*ATM_GLOW_COLOR, inner_alpha),
+            (center, center),
+            max(1, int(glow_radius * 0.55)),
+        )
+    glow_rect = glow_surface.get_rect(center=position)
+    surface.blit(glow_surface, glow_rect)
 
 
 def draw_marker_pin(
@@ -623,8 +663,6 @@ BG_COLOR_BOTTOM = (0, 34, 72)
 PLANET_COLOR_CORE = (255, 183, 77)
 PLANET_COLOR_MID = (240, 98, 146)
 PLANET_COLOR_EDGE = (124, 77, 255)
-INNER_HALO_COLOR = (124, 77, 255, int(255 * 0.10))
-OUTER_HALO_COLOR = (46, 209, 195, int(255 * 0.08))
 SAT_COLOR_CORE = (65, 224, 162)
 SAT_COLOR_EDGE = (42, 170, 226)
 SAT_HIGHLIGHT_COLOR = (206, 255, 250)
@@ -632,7 +670,8 @@ SAT_LIGHT_DIR = (-0.55, -0.4)
 SAT_SHADOW_COLOR = (6, 12, 24, 120)
 SAT_BASE_RADIUS = 6
 HUD_TEXT_COLOR = (234, 241, 255)
-HUD_TEXT_ALPHA = 255
+HUD_TEXT_ALPHA_BASE = 255
+CURRENT_HUD_ALPHA: float = float(HUD_TEXT_ALPHA_BASE)
 HUD_SHADOW_COLOR = (10, 15, 30, 120)
 ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
 ORBIT_SECONDARY_COLOR = (220, 236, 255, 140)
@@ -681,6 +720,30 @@ MARKER_PIN_FEEDBACK_DURATION = 1.6
 FPS_TEXT_ALPHA = int(255 * 0.6)
 STARFIELD_PARALLAX = 0.12
 
+ATM_ALTITUDE = 120_000.0  # m
+ATM_BOUNDARY_RADIUS = EARTH_RADIUS + ATM_ALTITUDE
+ATM_DRAG_COEFF = 1.4e-5
+ATM_WARNING_DURATION = 2.0
+ATM_WARNING_COLOR = (255, 176, 120)
+ATM_GLOW_COLOR = (255, 120, 80)
+ATM_GLOW_OUTER_ALPHA = 90
+ATM_GLOW_INNER_ALPHA = 180
+ATM_GLOW_RADIUS_FACTOR = 2.6
+ATMOSPHERE_RING_COLOR = (120, 180, 255, 120)
+
+IMPACT_FREEZE_DELAY = 0.7
+IMPACT_HUD_ALPHA_FACTOR = 0.35
+IMPACT_HUD_FADE_DURATION = 0.6
+IMPACT_OVERLAY_DELAY = 2.0
+IMPACT_OVERLAY_FADE_DURATION = 1.0
+IMPACT_OVERLAY_COLOR = (12, 18, 30, int(255 * 0.75))
+IMPACT_TITLE_COLOR = (255, 214, 130)
+IMPACT_TEXT_COLOR = (234, 241, 255)
+SHOCK_RING_COLOR = (255, 66, 66)
+SHOCK_RING_DURATION = 2.5
+SHOCK_RING_EXPANSION_FACTOR = 6.0
+SHOCK_RING_WIDTH = 6
+
 GRID_SPACING_METERS = 1_000_000.0
 GRID_MIN_PIXEL_SPACING = 42.0
 GRID_LINE_COLOR = (200, 208, 220)
@@ -697,7 +760,7 @@ MENU_PLANET_IMAGE_PATH = os.path.join(
 _MENU_PLANET_CACHE: dict[tuple[int, int], pygame.Surface] = {}
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
-    return 0.25 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
+    return 0.35 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
 
 
 def update_display_metrics(width: int, height: int) -> None:
@@ -715,17 +778,35 @@ MAX_PPM = 1e-2
 # =======================
 #   HJÄLPMETODER
 # =======================
-def accel(r: np.ndarray) -> np.ndarray:
+def in_atmosphere(r: np.ndarray) -> bool:
+    return np.linalg.norm(r) <= ATM_BOUNDARY_RADIUS
+
+
+def atmosphere_depth_ratio(r_magnitude: float) -> float:
+    if ATM_ALTITUDE <= 0.0:
+        return 0.0
+    return clamp((ATM_BOUNDARY_RADIUS - r_magnitude) / ATM_ALTITUDE, 0.0, 1.0)
+
+
+def accel(r: np.ndarray, v: np.ndarray) -> np.ndarray:
     rmag = np.linalg.norm(r)
-    return -MU * r / (rmag**3)
+    if rmag <= 0.0:
+        return np.zeros_like(r)
+    gravitational = -MU * r / (rmag**3)
+    if rmag <= ATM_BOUNDARY_RADIUS:
+        depth = atmosphere_depth_ratio(rmag)
+        drag_coeff = ATM_DRAG_COEFF * (0.2 + 0.8 * depth)
+        gravitational += -drag_coeff * v
+    return gravitational
+
 
 def rk4_step(r, v, dt):
-    a1 = accel(r);                k1_r = v;              k1_v = a1
-    a2 = accel(r + 0.5*dt*k1_r);  k2_r = v + 0.5*dt*k1_v; k2_v = a2
-    a3 = accel(r + 0.5*dt*k2_r);  k3_r = v + 0.5*dt*k2_v; k3_v = a3
-    a4 = accel(r + dt*k3_r);      k4_r = v + dt*k3_v;     k4_v = a4
-    r_next = r + (dt/6.0)*(k1_r + 2*k2_r + 2*k3_r + k4_r)
-    v_next = v + (dt/6.0)*(k1_v + 2*k2_v + 2*k3_v + k4_v)
+    a1 = accel(r, v);                    k1_r = v;              k1_v = a1
+    a2 = accel(r + 0.5 * dt * k1_r, v + 0.5 * dt * k1_v);  k2_r = v + 0.5 * dt * k1_v; k2_v = a2
+    a3 = accel(r + 0.5 * dt * k2_r, v + 0.5 * dt * k2_v);  k3_r = v + 0.5 * dt * k2_v; k3_v = a3
+    a4 = accel(r + dt * k3_r, v + dt * k3_v);              k4_r = v + dt * k3_v;     k4_v = a4
+    r_next = r + (dt / 6.0) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
+    v_next = v + (dt / 6.0) * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
     return r_next, v_next
 
 def energy_specific(r, v):
@@ -882,9 +963,9 @@ class Button:
             self._cached_text = text_value
             self._cached_font_id = font_id
         text_surf = self._cached_text_surface
-        if HUD_TEXT_ALPHA < 255:
+        if CURRENT_HUD_ALPHA < 255:
             text_surf = text_surf.copy()
-            text_surf.set_alpha(HUD_TEXT_ALPHA)
+            text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
 
@@ -899,6 +980,8 @@ class Button:
 def main():
     pygame.init()
     pygame.display.set_caption("Gymnasiearbete - Simulering av omloppsbana")
+    global CURRENT_HUD_ALPHA
+    CURRENT_HUD_ALPHA = float(HUD_TEXT_ALPHA_BASE)
     font_fps = pygame.font.SysFont("consolas", 14)
 
     fullscreen_flags = FULLSCREEN | DOUBLEBUF
@@ -948,8 +1031,9 @@ def main():
         altitude_km = (radius_world - EARTH_RADIUS) / 1_000.0
         text = f"{label}: {altitude_km:,.1f} km"
         text_surf = font.render(text, True, LABEL_TEXT_COLOR)
-        if HUD_TEXT_ALPHA < 255:
-            text_surf.set_alpha(HUD_TEXT_ALPHA)
+        if CURRENT_HUD_ALPHA < 255:
+            text_surf = text_surf.copy()
+            text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
 
         padding = 6
         bg_width = text_surf.get_width() + padding * 2
@@ -1137,6 +1221,15 @@ def main():
     pinned_markers: dict[str, tuple[float, float, float]] = {}
     pin_feedback_text: str | None = None
     pin_feedback_time = 0.0
+    impact_info: dict[str, float] | None = None
+    shock_ring_start: float | None = None
+    impact_freeze_time: float | None = None
+    impact_overlay_reveal_time: float | None = None
+    impact_overlay_visible_since: float | None = None
+    atmosphere_entry_time_sim: float | None = None
+    atmosphere_entry_time_real: float | None = None
+    atmosphere_warning_end_time: float = 0.0
+    atmosphere_logged = False
 
     # tidsackumulator för fast fysik
     accumulator = 0.0
@@ -1164,6 +1257,12 @@ def main():
         nonlocal camera_mode, is_dragging_camera
         nonlocal orbit_prediction_period, orbit_prediction_points
         nonlocal pinned_markers, pin_feedback_text, pin_feedback_time
+        nonlocal impact_info, shock_ring_start, impact_freeze_time
+        nonlocal impact_overlay_reveal_time, impact_overlay_visible_since
+        nonlocal atmosphere_entry_time_sim
+        nonlocal atmosphere_entry_time_real, atmosphere_warning_end_time
+        nonlocal atmosphere_logged
+        global CURRENT_HUD_ALPHA
         close_logger()
         r = R0.copy()
         v = scenario_velocity_vector()
@@ -1189,6 +1288,16 @@ def main():
         camera_mode = "earth"
         is_dragging_camera = False
         orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
+        impact_info = None
+        shock_ring_start = None
+        impact_freeze_time = None
+        impact_overlay_reveal_time = None
+        impact_overlay_visible_since = None
+        atmosphere_entry_time_sim = None
+        atmosphere_entry_time_real = None
+        atmosphere_warning_end_time = 0.0
+        atmosphere_logged = False
+        CURRENT_HUD_ALPHA = float(HUD_TEXT_ALPHA_BASE)
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
@@ -1359,10 +1468,32 @@ def main():
         else:
             camera_mode = "earth"
 
-    def reset_and_continue():
-        reset()
-        if state == "running":
+    def load_next_scenario() -> None:
+        nonlocal current_scenario_key, state, paused
+        if not SCENARIO_DISPLAY_ORDER:
+            return
+        try:
+            current_index = SCENARIO_DISPLAY_ORDER.index(current_scenario_key)
+        except ValueError:
+            current_index = 0
+        next_index = (current_index + 1) % len(SCENARIO_DISPLAY_ORDER)
+        previous_state = state
+        set_scenario(SCENARIO_DISPLAY_ORDER[next_index])
+        if previous_state == "impact":
+            state = "running"
+            paused = False
             init_run_logging()
+        elif previous_state != "menu":
+            state = "running"
+
+    def reset_and_continue():
+        nonlocal state, paused, impact_info, shock_ring_start
+        reset()
+        state = "running"
+        paused = False
+        impact_info = None
+        shock_ring_start = None
+        init_run_logging()
 
     sim_buttons: list[Button] = []
 
@@ -1443,9 +1574,19 @@ def main():
                     continue
                 if event.key in scenario_shortcut_map:
                     set_scenario(scenario_shortcut_map[event.key])
+                    if state == "impact":
+                        state = "running"
+                        paused = False
+                        init_run_logging()
                     continue
                 if event.key == pygame.K_g:
                     grid_overlay_enabled = not grid_overlay_enabled
+                    continue
+                if state == "impact":
+                    if event.key == pygame.K_r:
+                        reset_and_continue()
+                    elif event.key == pygame.K_n:
+                        load_next_scenario()
                     continue
                 if state == "running":
                     if event.key == pygame.K_SPACE:
@@ -1466,6 +1607,8 @@ def main():
                         real_time_speed = min(real_time_speed * 2.0, 10_000.0)
                     elif event.key == pygame.K_DOWN:
                         real_time_speed = max(real_time_speed / 2.0, 0.1)
+                    elif event.key == pygame.K_n:
+                        load_next_scenario()
                     elif event.key == pygame.K_c:
                         toggle_camera()
             elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -1608,6 +1751,11 @@ def main():
                 r, v = rk4_step(r, v, dt_step)
                 t_sim += dt_step
                 rmag = float(np.linalg.norm(r))
+                current_in_atmosphere = in_atmosphere(r)
+                if current_in_atmosphere and atmosphere_entry_time_sim is None:
+                    atmosphere_entry_time_sim = float(t_sim)
+                    atmosphere_entry_time_real = time.perf_counter()
+                    atmosphere_warning_end_time = atmosphere_entry_time_real + ATM_WARNING_DURATION
                 event_logged = False
                 event_type: str | None = None
                 prev_radius = prev_r
@@ -1628,11 +1776,13 @@ def main():
 
                 trail_history.append((float(r[0]), float(r[1]), time.perf_counter()))
 
+                vmag = float(np.linalg.norm(v))
+                eps = float(energy_specific(r, v))
+                e_val = float(eccentricity(r, v))
+                impact_triggered = not impact_logged and rmag <= EARTH_RADIUS
+
                 if logger is not None:
                     log_step_counter += 1
-                    vmag = float(np.linalg.norm(v))
-                    eps = float(energy_specific(r, v))
-                    e_val = float(eccentricity(r, v))
 
                     if event_type is not None:
                         logger.log_event(
@@ -1646,7 +1796,7 @@ def main():
                         )
                         event_logged = True
 
-                    if not impact_logged and rmag <= EARTH_RADIUS:
+                    if impact_triggered:
                         logger.log_event(
                             [
                                 float(t_sim),
@@ -1656,7 +1806,23 @@ def main():
                                 json.dumps({"penetration": EARTH_RADIUS - rmag, "energy": eps}),
                             ]
                         )
-                        impact_logged = True
+                        event_logged = True
+
+                    if (
+                        atmosphere_entry_time_sim is not None
+                        and not atmosphere_logged
+                        and current_in_atmosphere
+                    ):
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                "atmosphere_entry",
+                                rmag,
+                                vmag,
+                                json.dumps({"altitude": rmag - EARTH_RADIUS, "energy": eps}),
+                            ]
+                        )
+                        atmosphere_logged = True
                         event_logged = True
 
                     if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
@@ -1676,6 +1842,34 @@ def main():
                         log_state(dt_step)
                         log_step_counter = 0
 
+                if impact_triggered:
+                    impact_logged = True
+                    if impact_info is None:
+                        normal = r / max(rmag, 1e-9)
+                        tangent = np.array([-normal[1], normal[0]])
+                        tangential_speed = float(np.dot(v, tangent))
+                        radial_speed = float(np.dot(v, normal))
+                        angle_rad = math.atan2(abs(radial_speed), abs(tangential_speed))
+                        impact_info = {
+                            "time": float(t_sim),
+                            "speed": vmag,
+                            "angle": math.degrees(angle_rad),
+                            "radial_speed": radial_speed,
+                            "tangential_speed": tangential_speed,
+                            "position": (float(r[0]), float(r[1])),
+                        }
+                        shock_ring_start = time.perf_counter()
+                        impact_freeze_time = shock_ring_start + IMPACT_FREEZE_DELAY
+                        overlay_ready_time = shock_ring_start + IMPACT_OVERLAY_DELAY
+                        if atmosphere_warning_end_time > 0.0:
+                            overlay_ready_time = max(overlay_ready_time, atmosphere_warning_end_time)
+                        impact_overlay_reveal_time = overlay_ready_time
+                        impact_overlay_visible_since = None
+                        paused = True
+                        state = "impact"
+                        accumulator = 0.0
+                        break
+
             accumulator = 0.0
 
         now_time = time.perf_counter()
@@ -1684,6 +1878,25 @@ def main():
             trail_history.popleft()
 
         # --- Render ---
+        target_hud_alpha = float(HUD_TEXT_ALPHA_BASE)
+        if (
+            impact_info is not None
+            and shock_ring_start is not None
+            and impact_freeze_time is not None
+        ):
+            elapsed_since_impact = now_time - shock_ring_start
+            if elapsed_since_impact >= IMPACT_FREEZE_DELAY:
+                fade_duration = max(IMPACT_HUD_FADE_DURATION, 1e-6)
+                fade_progress = clamp(
+                    (elapsed_since_impact - IMPACT_FREEZE_DELAY) / fade_duration,
+                    0.0,
+                    1.0,
+                )
+                target_factor = 1.0 - (1.0 - IMPACT_HUD_ALPHA_FACTOR) * fade_progress
+                target_hud_alpha = HUD_TEXT_ALPHA_BASE * target_factor
+        CURRENT_HUD_ALPHA += (target_hud_alpha - CURRENT_HUD_ALPHA) * 0.2
+        CURRENT_HUD_ALPHA = clamp(CURRENT_HUD_ALPHA, 0.0, HUD_TEXT_ALPHA_BASE)
+
         # Smooth zoom mot mål
         ppm += (ppm_target - ppm) * 0.1
         ppm = clamp(ppm, MIN_PPM, MAX_PPM)
@@ -1714,6 +1927,7 @@ def main():
             screen.blit(grid_surface, (0, 0))
         mouse_pos = pygame.mouse.get_pos()
         rmag = float(np.linalg.norm(r))
+        depth_ratio = atmosphere_depth_ratio(rmag)
         earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
         if orbit_prediction_points:
@@ -1740,7 +1954,59 @@ def main():
             screen.blit(orbit_layer, (0, 0))
 
         earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
-        draw_earth(screen, earth_screen_pos, earth_radius_px)
+        atmosphere_thickness_px = 0
+        if ppm > 0.0:
+            atmosphere_thickness_px = max(1, int(ATM_ALTITUDE * ppm))
+            atmosphere_thickness_px = min(
+                atmosphere_thickness_px,
+                max(8, earth_radius_px // 5),
+            )
+        draw_earth(
+            screen,
+            earth_screen_pos,
+            earth_radius_px,
+            atmosphere_thickness=atmosphere_thickness_px,
+        )
+
+        if impact_info is not None and shock_ring_start is not None:
+            elapsed_ring = now_time - shock_ring_start
+            if elapsed_ring <= SHOCK_RING_DURATION:
+                progress = clamp(elapsed_ring / SHOCK_RING_DURATION, 0.0, 1.0)
+                impact_position = impact_info.get("position") if impact_info else None
+                if impact_position is not None:
+                    ring_center = world_to_screen(
+                        impact_position[0],
+                        impact_position[1],
+                        ppm,
+                        camera_center_tuple,
+                    )
+                else:
+                    ring_center = world_to_screen(
+                        r[0],
+                        r[1],
+                        ppm,
+                        camera_center_tuple,
+                    )
+                base_ring_radius = max(4, compute_satellite_radius(EARTH_RADIUS) * 2)
+                ring_radius_px = max(
+                    base_ring_radius,
+                    int(
+                        base_ring_radius
+                        + earth_radius_px * SHOCK_RING_EXPANSION_FACTOR * progress
+                    ),
+                )
+                ring_alpha = int(255 * (1.0 - progress))
+                if ring_alpha > 0 and ring_radius_px > 0:
+                    ring_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+                    ring_width = max(1, min(SHOCK_RING_WIDTH, ring_radius_px))
+                    pygame.draw.circle(
+                        ring_surface,
+                        (*SHOCK_RING_COLOR, ring_alpha),
+                        ring_center,
+                        ring_radius_px,
+                        ring_width,
+                    )
+                    screen.blit(ring_surface, (0, 0))
 
         if len(trail_history) >= 2:
             trail_points: list[tuple[tuple[int, int], int]] = []
@@ -1764,7 +2030,36 @@ def main():
 
         sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
         sat_radius_px = compute_satellite_radius(rmag)
+        heating_intensity = depth_ratio if rmag >= EARTH_RADIUS else 1.0
+        if heating_intensity > 0.0:
+            draw_heating_glow(screen, sat_pos, sat_radius_px, heating_intensity)
         draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
+
+        if atmosphere_entry_time_real is not None:
+            elapsed_entry = now_time - atmosphere_entry_time_real
+            if elapsed_entry < ATM_WARNING_DURATION:
+                fade = clamp(1.0 - elapsed_entry / ATM_WARNING_DURATION, 0.0, 1.0)
+                warning_alpha = int(255 * fade)
+                warning_text = "Atmospheric entry"
+                warning_surface = scenario_font.render(warning_text, True, ATM_WARNING_COLOR)
+                if warning_alpha < 255:
+                    warning_surface = warning_surface.copy()
+                    warning_surface.set_alpha(warning_alpha)
+                warning_bg_padding = 14
+                warning_bg = pygame.Surface(
+                    (warning_surface.get_width() + warning_bg_padding * 2,
+                     warning_surface.get_height() + warning_bg_padding),
+                    pygame.SRCALPHA,
+                )
+                pygame.draw.rect(
+                    warning_bg,
+                    (ATM_WARNING_COLOR[0], ATM_WARNING_COLOR[1], ATM_WARNING_COLOR[2], int(warning_alpha * 0.3)),
+                    warning_bg.get_rect(),
+                    border_radius=16,
+                )
+                warning_bg.blit(warning_surface, (warning_bg_padding, warning_bg_padding // 2))
+                warning_rect = warning_bg.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.14)))
+                screen.blit(warning_bg, warning_rect)
 
         hovered_marker: tuple[str, tuple[int, int], float] | None = None
         hovered_distance = float("inf")
@@ -1878,18 +2173,27 @@ def main():
         e = eccentricity(r, v)
         altitude_km = (rmag - EARTH_RADIUS) / 1_000.0
         scenario = get_current_scenario()
-        hud_lines = [
-            f"Scenario: {scenario.name}",
-            f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}",
-            f"alt {altitude_km:,.1f} km",
-            f"|v| {vmag:,.1f} m/s   e {e:.3f}",
-            f"ε {eps: .2e} J/kg",
+        hud_entries: list[tuple[str, tuple[int, int, int]]] = [
+            (f"Scenario: {scenario.name}", HUD_TEXT_COLOR),
+            (f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}", HUD_TEXT_COLOR),
         ]
+        altitude_color = HUD_TEXT_COLOR
+        altitude_line = f"alt {altitude_km:,.1f} km"
+        if depth_ratio > 0.0:
+            altitude_line = f"alt {altitude_km:,.1f} km   ATM"
+            altitude_color = ATM_WARNING_COLOR
+        hud_entries.append((altitude_line, altitude_color))
+        hud_entries.extend(
+            [
+                (f"|v| {vmag:,.1f} m/s   e {e:.3f}", HUD_TEXT_COLOR),
+                (f"ε {eps: .2e} J/kg", HUD_TEXT_COLOR),
+            ]
+        )
         padding_x = 16
         padding_y = 14
         line_height = font.get_linesize()
-        hud_width = max(font.size(line)[0] for line in hud_lines) + padding_x * 2
-        hud_height = line_height * len(hud_lines) + padding_y
+        hud_width = max(font.size(line)[0] for line, _ in hud_entries) + padding_x * 2
+        hud_height = line_height * len(hud_entries) + padding_y
         hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
         pygame.draw.rect(
             hud_surface,
@@ -1897,14 +2201,17 @@ def main():
             hud_surface.get_rect(),
             border_radius=14,
         )
-        for index, line in enumerate(hud_lines):
-            text_surf = font.render(line, True, HUD_TEXT_COLOR)
-            if HUD_TEXT_ALPHA < 255:
-                text_surf.set_alpha(HUD_TEXT_ALPHA)
+        for index, (line, color) in enumerate(hud_entries):
+            text_surf = font.render(line, True, color)
+            if CURRENT_HUD_ALPHA < 255:
+                text_surf = text_surf.copy()
+                text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
             hud_surface.blit(
                 text_surf,
                 (padding_x, int(padding_y / 2) + index * line_height),
             )
+        if CURRENT_HUD_ALPHA < 255:
+            hud_surface.set_alpha(int(CURRENT_HUD_ALPHA))
         screen.blit(hud_surface, (20, 20))
 
         for btn in sim_buttons:
@@ -1931,21 +2238,93 @@ def main():
                     scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
                     color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
                 text_surf = scenario_font.render(line, True, color)
+                if CURRENT_HUD_ALPHA < 255:
+                    text_surf = text_surf.copy()
+                    text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
                 panel_surface.blit(text_surf, (panel_padding, y))
                 y += line_height
+            if CURRENT_HUD_ALPHA < 255:
+                panel_surface.set_alpha(int(CURRENT_HUD_ALPHA))
             panel_rect = panel_surface.get_rect()
             panel_rect.topleft = (20, HEIGHT - panel_height - 20)
             screen.blit(panel_surface, panel_rect)
 
+        overlay_alpha_factor = 0.0
+        overlay_should_draw = False
+        if impact_info is not None and state == "impact":
+            if impact_overlay_reveal_time is None or now_time >= impact_overlay_reveal_time:
+                if impact_overlay_visible_since is None:
+                    impact_overlay_visible_since = now_time
+                fade_elapsed = now_time - impact_overlay_visible_since
+                fade_duration = max(IMPACT_OVERLAY_FADE_DURATION, 1e-6)
+                overlay_alpha_factor = clamp(fade_elapsed / fade_duration, 0.0, 1.0)
+                overlay_should_draw = True
+            else:
+                overlay_alpha_factor = 0.0
+        else:
+            impact_overlay_visible_since = None
+
+        if overlay_should_draw and impact_info is not None:
+            impact_time_value = impact_info.get("time", 0.0)
+            impact_speed_value = impact_info.get("speed", 0.0)
+            impact_angle_value = impact_info.get("angle", 0.0)
+            overlay_lines = [
+                ("IMPACT DETECTED", IMPACT_TITLE_COLOR),
+                (f"t = {impact_time_value:,.2f} s", IMPACT_TEXT_COLOR),
+                (f"|v| = {impact_speed_value:,.1f} m/s", IMPACT_TEXT_COLOR),
+                (
+                    f"Impact angle = {impact_angle_value:.1f}° from horizon",
+                    IMPACT_TEXT_COLOR,
+                ),
+                ("", IMPACT_TEXT_COLOR),
+                ("Press R to reset scenario", IMPACT_TEXT_COLOR),
+                ("Press N to load next scenario", IMPACT_TEXT_COLOR),
+            ]
+
+            overlay_padding_x = 24
+            overlay_padding_y = 18
+            line_height = font.get_linesize()
+            overlay_width = max(font.size(text)[0] for text, _ in overlay_lines) + overlay_padding_x * 2
+            overlay_height = line_height * len(overlay_lines) + overlay_padding_y * 2
+            overlay_surface = pygame.Surface((overlay_width, overlay_height), pygame.SRCALPHA)
+            pygame.draw.rect(
+                overlay_surface,
+                IMPACT_OVERLAY_COLOR,
+                overlay_surface.get_rect(),
+                border_radius=18,
+            )
+            for idx, (text, color) in enumerate(overlay_lines):
+                if not text:
+                    continue
+                text_surf = font.render(text, True, color)
+                overlay_surface.blit(
+                    text_surf,
+                    (overlay_padding_x, overlay_padding_y + idx * line_height),
+                )
+
+            if overlay_alpha_factor < 1.0:
+                overlay_surface.set_alpha(int(255 * overlay_alpha_factor))
+
+            overlay_rect = overlay_surface.get_rect()
+            overlay_rect.center = (WIDTH // 2, HEIGHT // 2)
+            screen.blit(overlay_surface, overlay_rect)
+
         if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
             flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
+            if CURRENT_HUD_ALPHA < 255:
+                flash_surf = flash_surf.copy()
+                flash_surf.set_alpha(int(CURRENT_HUD_ALPHA))
             flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
             screen.blit(flash_surf, flash_rect)
 
         fps_value = clock.get_fps()
         fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
-        if FPS_TEXT_ALPHA < 255:
-            fps_text.set_alpha(FPS_TEXT_ALPHA)
+        combined_alpha = FPS_TEXT_ALPHA
+        if CURRENT_HUD_ALPHA < 255:
+            combined_alpha = min(combined_alpha, int(CURRENT_HUD_ALPHA))
+        if combined_alpha < 255:
+            fps_text = fps_text.copy()
+            fps_text.set_alpha(combined_alpha)
         fps_rect = fps_text.get_rect(bottomright=(WIDTH - 16, HEIGHT - 16))
         screen.blit(fps_text, fps_rect)
 
