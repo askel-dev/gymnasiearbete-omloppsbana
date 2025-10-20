@@ -11,6 +11,7 @@ import numpy as np
 from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import islice
 
 
 _TEXT_SURFACE_CACHE: dict[tuple[int, str, tuple[int, int, int] | tuple[int, int, int, int]], pygame.Surface] = {}
@@ -684,6 +685,19 @@ HUD_SHADOW_COLOR = (10, 15, 30, 120)
 ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
 ORBIT_SECONDARY_COLOR = (220, 236, 255, 140)
 ORBIT_LINE_WIDTH = 2
+TRAIL_MAX_LENGTH = 4000
+TRAIL_DRAW_MAX = 1800
+TRAIL_TEMPORAL_FADE_ALPHA = 250
+TRAIL_MIN_ALPHA = 25
+TRAIL_MAX_ALPHA = 200
+TRAIL_NEWEST_THICKNESS = 2
+TRAIL_OLDEST_THICKNESS = 1
+TRAIL_COLOR_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
+    (0.0, (72, 132, 255)),
+    (0.45, (120, 224, 255)),
+    (0.75, (255, 204, 128)),
+    (1.0, (255, 120, 90)),
+)
 VEL_ARROW_COLOR = (255, 220, 180)
 VEL_ARROW_SCALE = 0.004
 VEL_ARROW_MIN_PIXELS = 0
@@ -846,6 +860,23 @@ def clamp(val, lo, hi):
     return max(lo, min(hi, val))
 
 
+def gradient_color(t: float) -> tuple[int, int, int]:
+    if not TRAIL_COLOR_STOPS:
+        raise ValueError("TRAIL_COLOR_STOPS must contain at least one stop")
+
+    t = clamp(t, 0.0, 1.0)
+    for idx in range(1, len(TRAIL_COLOR_STOPS)):
+        prev_t, prev_color = TRAIL_COLOR_STOPS[idx - 1]
+        stop_t, stop_color = TRAIL_COLOR_STOPS[idx]
+        if t <= stop_t:
+            span = stop_t - prev_t
+            if span <= 0.0:
+                return stop_color
+            local_t = (t - prev_t) / span
+            return _lerp_color(prev_color, stop_color, local_t)
+    return TRAIL_COLOR_STOPS[-1][1]
+
+
 def compute_satellite_radius(r_magnitude: float) -> int:
     altitude = max(0.0, r_magnitude - EARTH_RADIUS)
     scale = 1.0 + clamp(altitude / 20_000_000.0, 0.0, 0.2)
@@ -865,6 +896,56 @@ def draw_orbit_line(
     else:
         pygame.draw.lines(surface, color, False, points, width)
         pygame.draw.aalines(surface, color, False, points)
+
+
+def draw_satellite_trail(
+    surface: pygame.Surface,
+    trail_points: "deque[tuple[float, float, float]]",
+    *,
+    ppm: float,
+    camera_center: tuple[float, float],
+    max_draw: int = TRAIL_DRAW_MAX,
+) -> None:
+    if len(trail_points) < 2:
+        return
+
+    total = len(trail_points)
+    if total > max_draw:
+        step = max(1, math.ceil(total / max_draw))
+        sampled = list(islice(trail_points, 0, total, step))
+        last_point = trail_points[-1]
+        if sampled[-1] != last_point:
+            sampled.append(last_point)
+    else:
+        sampled = list(trail_points)
+
+    if len(sampled) < 2:
+        return
+
+    speeds = [point[2] for point in sampled]
+    vmin = min(speeds)
+    vmax = max(speeds)
+    dv = vmax - vmin if vmax > vmin else 1.0
+
+    px_prev = world_to_screen(sampled[0][0], sampled[0][1], ppm, camera_center)
+    n_segments = len(sampled) - 1
+    for idx in range(1, len(sampled)):
+        x, y, speed = sampled[idx]
+        px_curr = world_to_screen(x, y, ppm, camera_center)
+        u = (speed - vmin) / dv
+        rgb = gradient_color(u)
+        progress = idx / n_segments if n_segments > 0 else 1.0
+        alpha = int(progress * (TRAIL_MAX_ALPHA - TRAIL_MIN_ALPHA) + TRAIL_MIN_ALPHA)
+        thickness = max(
+            TRAIL_OLDEST_THICKNESS,
+            int(
+                progress
+                * (TRAIL_NEWEST_THICKNESS - TRAIL_OLDEST_THICKNESS)
+                + TRAIL_OLDEST_THICKNESS
+            ),
+        )
+        pygame.draw.line(surface, (*rgb, alpha), px_prev, px_curr, thickness)
+        px_prev = px_curr
 
 
 def downsample_points(
@@ -1054,6 +1135,7 @@ def main():
     orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
     label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
     grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+    trail_surf = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 18)
@@ -1141,6 +1223,8 @@ def main():
     subtitle_font_size = max(26, int(min_dimension * 0.032))
 
     background_color = BACKGROUND_COLOR
+    use_smooth_fade = True
+    show_trail = True
     menu_parallax_layers = generate_menu_parallax_layers(WIDTH, HEIGHT)
     menu_mouse_offset = [0.0, 0.0]
     menu_last_time = time.perf_counter()
@@ -1249,6 +1333,7 @@ def main():
 
     orbit_prediction_period: float | None = None
     orbit_prediction_points: list[tuple[float, float]] = []
+    trail: deque[tuple[float, float, float]] = deque(maxlen=TRAIL_MAX_LENGTH)
 
     orbit_markers: deque[tuple[str, float, float, float]] = deque(maxlen=20)
     pinned_markers: dict[str, tuple[float, float, float]] = {}
@@ -1311,6 +1396,8 @@ def main():
         prev_dr = None
         impact_logged = False
         escape_logged = False
+        trail.clear()
+        trail_surf.fill((0, 0, 0, 0))
         orbit_markers.clear()
         pinned_markers.clear()
         pin_feedback_text = None
@@ -1331,6 +1418,7 @@ def main():
         atmosphere_warning_end_time = 0.0
         atmosphere_logged = False
         CURRENT_HUD_ALPHA = float(HUD_TEXT_ALPHA_BASE)
+        trail.append((float(r[0]), float(r[1]), float(np.linalg.norm(v))))
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
@@ -1587,6 +1675,7 @@ def main():
             orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
             label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
             grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+            trail_surf = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
         orbit_layer.fill((0, 0, 0, 0))
         label_layer.fill((0, 0, 0, 0))
@@ -1594,6 +1683,16 @@ def main():
             grid_surface.fill((0, 0, 0, 0))
         orbit_drawn = False
         labels_drawn = False
+        if show_trail:
+            if use_smooth_fade:
+                trail_surf.fill(
+                    (255, 255, 255, TRAIL_TEMPORAL_FADE_ALPHA),
+                    special_flags=pygame.BLEND_RGBA_MULT,
+                )
+            else:
+                trail_surf.fill((0, 0, 0, 0))
+        else:
+            trail_surf.fill((0, 0, 0, 0))
         # --- Input ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1643,6 +1742,9 @@ def main():
                         toggle_camera()
                     elif event.key == pygame.K_v:
                         show_velocity_arrow = not show_velocity_arrow
+                    elif event.key == pygame.K_f:
+                        use_smooth_fade = not use_smooth_fade
+                        trail_surf.fill((0, 0, 0, 0))
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1 and state == "running":
                     if not is_over_button(event.pos):
@@ -1815,6 +1917,7 @@ def main():
                     refresh_pinned_marker(event_type)
 
                 vmag = float(np.linalg.norm(v))
+                trail.append((float(r[0]), float(r[1]), vmag))
                 eps = float(energy_specific(r, v))
                 e_val = float(eccentricity(r, v))
                 impact_triggered = not impact_logged and rmag <= EARTH_RADIUS
@@ -1994,6 +2097,14 @@ def main():
             earth_radius_px,
         )
 
+        if show_trail and len(trail) >= 2:
+            draw_satellite_trail(
+                trail_surf,
+                trail,
+                ppm=ppm,
+                camera_center=camera_center_tuple,
+            )
+
         if impact_info is not None and shock_ring_start is not None:
             elapsed_ring = now_time - shock_ring_start
             if elapsed_ring <= SHOCK_RING_DURATION:
@@ -2040,6 +2151,9 @@ def main():
         if heating_intensity > 0.0:
             draw_heating_glow(screen, sat_pos, sat_radius_px, heating_intensity)
         draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
+
+        if show_trail:
+            screen.blit(trail_surf, (0, 0))
 
         if show_velocity_arrow:
             vx, vy = float(v[0]), float(v[1])
