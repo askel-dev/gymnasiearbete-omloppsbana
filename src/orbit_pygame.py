@@ -251,9 +251,16 @@ def draw_menu_planet(
     surface.blit(planet_surface, planet_surface.get_rect(center=center))
 
 
-def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tuple[int, int], head_length: int, head_angle: float) -> None:
-    pygame.draw.line(surface, VEL_COLOR, start, end, 2)
+def draw_velocity_arrow(
+    surface: pygame.Surface,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    head_length: int,
+    head_angle_deg: float,
+) -> None:
+    pygame.draw.line(surface, VEL_ARROW_COLOR, start, end, 2)
     angle = math.atan2(start[1] - end[1], end[0] - start[0])
+    head_angle = math.radians(head_angle_deg)
     left = (
         int(end[0] - head_length * math.cos(angle - head_angle)),
         int(end[1] + head_length * math.sin(angle - head_angle)),
@@ -262,7 +269,7 @@ def draw_velocity_arrow(surface: pygame.Surface, start: tuple[int, int], end: tu
         int(end[0] - head_length * math.cos(angle + head_angle)),
         int(end[1] + head_length * math.sin(angle + head_angle)),
     )
-    pygame.draw.polygon(surface, VEL_COLOR, [end, left, right])
+    pygame.draw.polygon(surface, VEL_ARROW_COLOR, [end, left, right])
 
 
 def generate_starfield(num_stars: int) -> list[dict[str, object]]:
@@ -646,7 +653,12 @@ HUD_SHADOW_COLOR = (10, 15, 30, 120)
 ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
 ORBIT_SECONDARY_COLOR = (220, 236, 255, 140)
 ORBIT_LINE_WIDTH = 2
-VEL_COLOR = (46, 209, 195)
+VEL_ARROW_COLOR = (255, 220, 180)
+VEL_ARROW_SCALE = 0.004
+VEL_ARROW_MIN_PIXELS = 0
+VEL_ARROW_MAX_PIXELS = 90
+VEL_ARROW_HEAD_LENGTH = 10
+VEL_ARROW_HEAD_ANGLE_DEG = 26
 BUTTON_COLOR = (8, 32, 64, int(255 * 0.78))
 BUTTON_HOVER_COLOR = (18, 52, 94, int(255 * 0.88))
 BUTTON_TEXT_COLOR = (234, 241, 255)
@@ -1167,6 +1179,7 @@ def main():
     ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
     grid_overlay_enabled = False
+    show_velocity_arrow = True
     camera_mode = "earth"
     camera_center = np.array([0.0, 0.0], dtype=float)
     camera_target = np.array([0.0, 0.0], dtype=float)
@@ -1220,7 +1233,7 @@ def main():
         nonlocal impact_overlay_reveal_time, impact_overlay_visible_since
         nonlocal atmosphere_entry_time_sim
         nonlocal atmosphere_entry_time_real, atmosphere_warning_end_time
-        nonlocal atmosphere_logged
+        nonlocal atmosphere_logged, show_velocity_arrow
         global CURRENT_HUD_ALPHA
         close_logger()
         r = R0.copy()
@@ -1244,6 +1257,7 @@ def main():
         camera_center[:] = (0.0, 0.0)
         camera_target[:] = (0.0, 0.0)
         camera_mode = "earth"
+        show_velocity_arrow = True
         is_dragging_camera = False
         orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
         impact_info = None
@@ -1566,6 +1580,8 @@ def main():
                         load_next_scenario()
                     elif event.key == pygame.K_c:
                         toggle_camera()
+                    elif event.key == pygame.K_v:
+                        show_velocity_arrow = not show_velocity_arrow
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1 and state == "running":
                     if not is_over_button(event.pos):
@@ -1955,6 +1971,31 @@ def main():
         if heating_intensity > 0.0:
             draw_heating_glow(screen, sat_pos, sat_radius_px, heating_intensity)
         draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
+
+        if show_velocity_arrow:
+            vx, vy = float(v[0]), float(v[1])
+            vmag = math.hypot(vx, vy)
+            if vmag > 1e-6:
+                arrow_length = clamp(
+                    vmag * VEL_ARROW_SCALE,
+                    VEL_ARROW_MIN_PIXELS,
+                    VEL_ARROW_MAX_PIXELS,
+                )
+                if arrow_length > 4.0:
+                    dir_x = vx / vmag
+                    dir_y = vy / vmag
+                    arrow_end = (
+                        int(round(sat_pos[0] + dir_x * arrow_length)),
+                        int(round(sat_pos[1] - dir_y * arrow_length)),
+                    )
+                    head_length = int(max(4, min(VEL_ARROW_HEAD_LENGTH, arrow_length * 0.6)))
+                    draw_velocity_arrow(
+                        screen,
+                        sat_pos,
+                        arrow_end,
+                        head_length,
+                        VEL_ARROW_HEAD_ANGLE_DEG,
+                    )
 
         if atmosphere_entry_time_real is not None:
             elapsed_entry = now_time - atmosphere_entry_time_real
