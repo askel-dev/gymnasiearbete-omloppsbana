@@ -2008,27 +2008,6 @@ def main():
                     )
                     screen.blit(ring_surface, (0, 0))
 
-        if impact_info is not None and shock_ring_start is not None:
-            elapsed_ring = now_time - shock_ring_start
-            if elapsed_ring <= SHOCK_RING_DURATION:
-                progress = clamp(elapsed_ring / SHOCK_RING_DURATION, 0.0, 1.0)
-                ring_radius_px = max(
-                    1,
-                    int(earth_radius_px + earth_radius_px * SHOCK_RING_EXPANSION_FACTOR * progress),
-                )
-                ring_alpha = int(255 * (1.0 - progress))
-                if ring_alpha > 0 and ring_radius_px > 0:
-                    ring_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-                    ring_width = max(1, min(SHOCK_RING_WIDTH, ring_radius_px))
-                    pygame.draw.circle(
-                        ring_surface,
-                        (*SHOCK_RING_COLOR, ring_alpha),
-                        earth_screen_pos,
-                        ring_radius_px,
-                        ring_width,
-                    )
-                    screen.blit(ring_surface, (0, 0))
-
         if len(trail_history) >= 2:
             trail_points: list[tuple[tuple[int, int], int]] = []
             for px, py, ts in trail_history:
