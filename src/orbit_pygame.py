@@ -10,7 +10,6 @@ import sys
 import numpy as np
 from collections import deque, OrderedDict
 from dataclasses import dataclass
-from functools import lru_cache
 
 
 _TEXT_SURFACE_CACHE_MAX_SIZE = 256
@@ -67,10 +66,6 @@ def draw_text_with_shadow(
     surface.blit(text_surf, position)
 
 
-def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) -> tuple[int, int, int]:
-    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
-
-
 _EARTH_SPRITE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "assets", "earth_sprite_2.png"
 )
@@ -113,67 +108,15 @@ def draw_earth(
     surface.blit(sprite, rect)
 
 
-@lru_cache(maxsize=64)
-def _satellite_surface(radius: int) -> pygame.Surface:
-    size = radius * 4
-    surface = pygame.Surface((size, size), pygame.SRCALPHA)
-    center = size // 2
-    light_dir = SAT_LIGHT_DIR
-    length = math.hypot(light_dir[0], light_dir[1])
-    if length != 0:
-        light_dir = (light_dir[0] / length, light_dir[1] / length)
-    for y in range(size):
-        for x in range(size):
-            dx = x - center + 0.5
-            dy = y - center + 0.5
-            dist = math.hypot(dx, dy)
-            if dist > radius:
-                continue
-            t = dist / max(1, radius)
-            base_color = _lerp_color(SAT_COLOR_CORE, SAT_COLOR_EDGE, t)
-            nx = dx / max(1e-6, radius)
-            ny = dy / max(1e-6, radius)
-            dot = max(0.0, nx * light_dir[0] + ny * light_dir[1])
-            rim = min(1.0, (t ** 1.5) * (dot ** 2) * 2.0)
-            color = _lerp_color(base_color, SAT_HIGHLIGHT_COLOR, rim)
-            surface.set_at((x, y), (*color, 255))
-    return surface
-
-
 def draw_satellite(
     surface: pygame.Surface,
     position: tuple[int, int],
-    planet_position: tuple[int, int] | None,
     radius: int,
 ) -> None:
     if radius <= 0:
         return
 
-    if planet_position is not None:
-        dx = planet_position[0] - position[0]
-        dy = planet_position[1] - position[1]
-        distance = math.hypot(dx, dy)
-        if distance != 0:
-            offset_scale = radius * 0.6
-            offset_x = int(dx / distance * offset_scale)
-            offset_y = int(dy / distance * offset_scale)
-        else:
-            offset_x = offset_y = 0
-        shadow_surface = pygame.Surface((radius * 4, radius * 4), pygame.SRCALPHA)
-        pygame.draw.circle(
-            shadow_surface,
-            SAT_SHADOW_COLOR,
-            (radius * 2, radius * 2),
-            radius,
-        )
-        shadow_rect = shadow_surface.get_rect(
-            center=(position[0] + offset_x, position[1] + offset_y)
-        )
-        surface.blit(shadow_surface, shadow_rect)
-
-    sat_surface = _satellite_surface(radius)
-    sat_rect = sat_surface.get_rect(center=position)
-    surface.blit(sat_surface, sat_rect)
+    pygame.draw.circle(surface, SATELLITE_COLOR, position, radius)
 
 
 def draw_heating_glow(
@@ -680,12 +623,8 @@ MAX_RENDERED_ORBIT_POINTS = 800
 WIDTH, HEIGHT = 1000, 800
 BACKGROUND_COLOR = (0, 34, 72)
 PLANET_COLOR = (255, 183, 77)
-SAT_COLOR_CORE = (65, 224, 162)
-SAT_COLOR_EDGE = (42, 170, 226)
-SAT_HIGHLIGHT_COLOR = (206, 255, 250)
-SAT_LIGHT_DIR = (-0.55, -0.4)
-SAT_SHADOW_COLOR = (6, 12, 24, 120)
-SAT_BASE_RADIUS = 6
+SATELLITE_COLOR = (255, 255, 255)
+SATELLITE_PIXEL_RADIUS = 6
 HUD_TEXT_COLOR = (234, 241, 255)
 HUD_TEXT_ALPHA_BASE = 255
 CURRENT_HUD_ALPHA: float = float(HUD_TEXT_ALPHA_BASE)
@@ -855,10 +794,8 @@ def clamp(val, lo, hi):
     return max(lo, min(hi, val))
 
 
-def compute_satellite_radius(r_magnitude: float) -> int:
-    altitude = max(0.0, r_magnitude - EARTH_RADIUS)
-    scale = 1.0 + clamp(altitude / 20_000_000.0, 0.0, 0.2)
-    return max(3, int(round(SAT_BASE_RADIUS * scale)))
+def compute_satellite_radius(_: float) -> int:
+    return SATELLITE_PIXEL_RADIUS
 
 
 def draw_orbit_line(
@@ -2048,7 +1985,7 @@ def main():
         heating_intensity = depth_ratio if rmag >= EARTH_RADIUS else 1.0
         if heating_intensity > 0.0:
             draw_heating_glow(screen, sat_pos, sat_radius_px, heating_intensity)
-        draw_satellite(screen, sat_pos, earth_screen_pos, sat_radius_px)
+        draw_satellite(screen, sat_pos, sat_radius_px)
 
         if show_velocity_arrow:
             vx, vy = float(v[0]), float(v[1])
