@@ -798,8 +798,6 @@ def update_display_metrics(width: int, height: int) -> None:
 PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
 MIN_PPM = 1e-7
 MAX_PPM = 1e-2
-CAMERA_FOLLOW_RATE = 8.0
-ZOOM_SMOOTH_RATE = 6.0
 
 # =======================
 #   HJÄLPMETODER
@@ -1786,16 +1784,6 @@ def main():
         now = time.perf_counter()
         frame_dt_real = now - last_time
         last_time = now
-        zoom_alpha = clamp(
-            1.0 - math.exp(-frame_dt_real * ZOOM_SMOOTH_RATE),
-            0.0,
-            1.0,
-        )
-        follow_alpha = clamp(
-            1.0 - math.exp(-frame_dt_real * CAMERA_FOLLOW_RATE),
-            0.0,
-            1.0,
-        )
         sim_dt_target = frame_dt_real * real_time_speed
         accumulator += sim_dt_target
 
@@ -1953,7 +1941,7 @@ def main():
         CURRENT_HUD_ALPHA = clamp(CURRENT_HUD_ALPHA, 0.0, HUD_TEXT_ALPHA_BASE)
 
         # Smooth zoom mot mål
-        ppm += (ppm_target - ppm) * zoom_alpha
+        ppm += (ppm_target - ppm) * 0.1
         ppm = clamp(ppm, MIN_PPM, MAX_PPM)
 
         # Kamera-targets
@@ -1964,7 +1952,7 @@ def main():
             camera_target[:] = (r[0], r[1])
         else:
             camera_target[:] = camera_center
-        camera_center += (camera_target - camera_center) * follow_alpha
+        camera_center += (camera_target - camera_center) * 0.1
 
         # Bakgrund
         screen.fill(background_color)
