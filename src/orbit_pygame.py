@@ -12,6 +12,27 @@ from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
 
+
+_TEXT_SURFACE_CACHE: dict[tuple[int, str, tuple[int, int, int] | tuple[int, int, int, int]], pygame.Surface] = {}
+
+
+def get_text_surface(
+    font: pygame.font.Font,
+    text: str,
+    color: tuple[int, int, int] | tuple[int, int, int, int],
+) -> pygame.Surface:
+    """Return a cached rendered surface for the given font, text and color.
+
+    Surfaces retrieved from the cache must be treated as immutable by callers.
+    """
+
+    key = (id(font), text, color)
+    cached = _TEXT_SURFACE_CACHE.get(key)
+    if cached is None:
+        cached = font.render(text, True, color)
+        _TEXT_SURFACE_CACHE[key] = cached
+    return cached
+
 from logging_utils import RunLogger
 
 
@@ -23,13 +44,13 @@ def draw_text_with_shadow(
     *,
     shadow: bool = False,
 ) -> None:
-    text_surf = font.render(text, True, HUD_TEXT_COLOR)
+    text_surf = get_text_surface(font, text, HUD_TEXT_COLOR)
     if CURRENT_HUD_ALPHA < 255:
         text_surf = text_surf.copy()
         text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
     if shadow:
         shadow_color = HUD_SHADOW_COLOR[:3]
-        shadow_surf = font.render(text, True, shadow_color)
+        shadow_surf = get_text_surface(font, text, shadow_color)
         if len(HUD_SHADOW_COLOR) == 4:
             shadow_surf.set_alpha(HUD_SHADOW_COLOR[3])
         x, y = position
@@ -230,12 +251,18 @@ def draw_menu_planet(
 
     if image is not None:
         width, height = image.get_size()
+        if width <= 0 or height <= 0:
+            return
         scale = diameter / max(width, height)
         new_size = (
             max(1, int(width * scale)),
             max(1, int(height * scale)),
         )
-        scaled = pygame.transform.smoothscale(image, new_size)
+        cache_key = (id(image), new_size[0], new_size[1])
+        scaled = _MENU_PLANET_CACHE.get(cache_key)
+        if scaled is None:
+            scaled = pygame.transform.smoothscale(image, new_size).convert_alpha()
+            _MENU_PLANET_CACHE[cache_key] = scaled
         rect = scaled.get_rect(center=center)
         surface.blit(scaled, rect)
         return
@@ -383,7 +410,9 @@ def draw_coordinate_grid(
             if 0 <= sx <= width and GRID_LABEL_MARGIN < sx < width - 140:
                 label_text = _format_megameters(x_world)
                 if label_text:
-                    label_surf = tick_font.render(label_text, True, GRID_LABEL_COLOR)
+                    label_surf = get_text_surface(
+                        tick_font, label_text, GRID_LABEL_COLOR
+                    )
                     if GRID_LABEL_ALPHA < 255:
                         label_surf = label_surf.copy()
                         label_surf.set_alpha(GRID_LABEL_ALPHA)
@@ -408,7 +437,9 @@ def draw_coordinate_grid(
             if 0 <= sy <= height and GRID_LABEL_MARGIN * 2 < sy < height - GRID_LABEL_MARGIN:
                 label_text = _format_megameters(y_world)
                 if label_text:
-                    label_surf = tick_font.render(label_text, True, GRID_LABEL_COLOR)
+                    label_surf = get_text_surface(
+                        tick_font, label_text, GRID_LABEL_COLOR
+                    )
                     if GRID_LABEL_ALPHA < 255:
                         label_surf = label_surf.copy()
                         label_surf.set_alpha(GRID_LABEL_ALPHA)
@@ -418,7 +449,7 @@ def draw_coordinate_grid(
                         surface.blit(label_surf, rect)
 
     axis_color = GRID_LABEL_COLOR
-    axis_label = axis_font.render("Y [Mm]", True, axis_color)
+    axis_label = get_text_surface(axis_font, "Y [Mm]", axis_color)
     if GRID_AXIS_LABEL_ALPHA < 255:
         axis_label = axis_label.copy()
         axis_label.set_alpha(GRID_AXIS_LABEL_ALPHA)
@@ -426,7 +457,7 @@ def draw_coordinate_grid(
     axis_rect.bottomright = (width - GRID_LABEL_MARGIN, height - GRID_LABEL_MARGIN)
     surface.blit(axis_label, axis_rect)
 
-    y_axis_label = axis_font.render("X [Mm]", True, axis_color)
+    y_axis_label = get_text_surface(axis_font, "X [Mm]", axis_color)
     if GRID_AXIS_LABEL_ALPHA < 255:
         y_axis_label = y_axis_label.copy()
         y_axis_label.set_alpha(GRID_AXIS_LABEL_ALPHA)
@@ -731,7 +762,7 @@ STARFIELD: list[dict[str, object]] = []
 MENU_PLANET_IMAGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "assets", "menu_planet.png"
 )
-_MENU_PLANET_CACHE: dict[tuple[int, int], pygame.Surface] = {}
+_MENU_PLANET_CACHE: dict[tuple[int, int, int], pygame.Surface] = {}
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
     """Compute the rendering scale in pixels per meter.
@@ -943,7 +974,9 @@ class Button:
             or text_value != self._cached_text
             or font_id != self._cached_font_id
         ):
-            self._cached_text_surface = font.render(text_value, True, style.text_color)
+            self._cached_text_surface = get_text_surface(
+                font, text_value, style.text_color
+            )
             self._cached_text = text_value
             self._cached_font_id = font_id
         text_surf = self._cached_text_surface
@@ -1013,7 +1046,7 @@ def main():
         label = marker_display_name(marker_type)
         altitude_km = (radius_world - EARTH_RADIUS) / 1_000.0
         text = f"{label}: {altitude_km:,.1f} km"
-        text_surf = font.render(text, True, LABEL_TEXT_COLOR)
+        text_surf = get_text_surface(font, text, LABEL_TEXT_COLOR)
         if CURRENT_HUD_ALPHA < 255:
             text_surf = text_surf.copy()
             text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
@@ -1056,7 +1089,9 @@ def main():
             badge_text = "PINNED"
             badge_padding_x = 6
             badge_padding_y = 2
-            badge_surf = font_fps.render(badge_text, True, LABEL_PINNED_BADGE_TEXT_COLOR)
+            badge_surf = get_text_surface(
+                font_fps, badge_text, LABEL_PINNED_BADGE_TEXT_COLOR
+            )
             badge_rect = pygame.Rect(
                 0,
                 0,
@@ -1645,11 +1680,15 @@ def main():
             for layer in menu_parallax_layers:
                 layer.draw(screen, (menu_mouse_offset[0], menu_mouse_offset[1]))
 
-            title_surf = title_font.render(menu_title_text, True, MENU_TITLE_COLOR)
+            title_surf = get_text_surface(
+                title_font, menu_title_text, MENU_TITLE_COLOR
+            )
             title_rect = title_surf.get_rect(center=(WIDTH // 2, title_y))
             screen.blit(title_surf, title_rect)
 
-            subtitle_surf = subtitle_font.render(menu_subtitle_text, True, MENU_SUBTITLE_COLOR)
+            subtitle_surf = get_text_surface(
+                subtitle_font, menu_subtitle_text, MENU_SUBTITLE_COLOR
+            )
             subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, subtitle_y))
             screen.blit(subtitle_surf, subtitle_rect)
 
@@ -1678,7 +1717,7 @@ def main():
                     else:
                         scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
                         color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
-                    text_surf = scenario_font.render(line, True, color)
+                    text_surf = get_text_surface(scenario_font, line, color)
                     panel_surface.blit(text_surf, (panel_padding, y))
                     y += line_height
                 panel_rect = panel_surface.get_rect()
@@ -1686,13 +1725,17 @@ def main():
                 screen.blit(panel_surface, panel_rect)
 
             if scenario_flash_text and now_menu - scenario_flash_time < SCENARIO_FLASH_DURATION:
-                flash_surf = scenario_font.render(scenario_flash_text, True, MENU_TITLE_COLOR)
+                flash_surf = get_text_surface(
+                    scenario_font, scenario_flash_text, MENU_TITLE_COLOR
+                )
                 flash_rect = flash_surf.get_rect(center=(WIDTH // 2, menu_button_y - 40))
                 screen.blit(flash_surf, flash_rect)
 
             # --- FPS Counter ---
             fps_value = clock.get_fps()
-            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (140, 180, 220))
+            fps_text = get_text_surface(
+                font_fps, f"FPS: {fps_value:.1f}", (140, 180, 220)
+            )
             # placera i nedre högra hörnet
             text_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
             screen.blit(fps_text, text_rect)
@@ -2003,7 +2046,9 @@ def main():
                 fade = clamp(1.0 - elapsed_entry / ATM_WARNING_DURATION, 0.0, 1.0)
                 warning_alpha = int(255 * fade)
                 warning_text = "Atmospheric entry"
-                warning_surface = scenario_font.render(warning_text, True, ATM_WARNING_COLOR)
+                warning_surface = get_text_surface(
+                    scenario_font, warning_text, ATM_WARNING_COLOR
+                )
                 if warning_alpha < 255:
                     warning_surface = warning_surface.copy()
                     warning_surface.set_alpha(warning_alpha)
@@ -2108,7 +2153,9 @@ def main():
             if elapsed_feedback < MARKER_PIN_FEEDBACK_DURATION:
                 fade = clamp(1.0 - elapsed_feedback / MARKER_PIN_FEEDBACK_DURATION, 0.0, 1.0)
                 feedback_alpha = int(255 * fade)
-                feedback_text_surf = scenario_font.render(pin_feedback_text, True, LABEL_TEXT_COLOR)
+                feedback_text_surf = get_text_surface(
+                    scenario_font, pin_feedback_text, LABEL_TEXT_COLOR
+                )
                 if feedback_alpha < 255:
                     feedback_text_surf = feedback_text_surf.copy()
                     feedback_text_surf.set_alpha(feedback_alpha)
@@ -2164,7 +2211,7 @@ def main():
             border_radius=14,
         )
         for index, (line, color) in enumerate(hud_entries):
-            text_surf = font.render(line, True, color)
+            text_surf = get_text_surface(font, line, color)
             if CURRENT_HUD_ALPHA < 255:
                 text_surf = text_surf.copy()
                 text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
@@ -2199,7 +2246,7 @@ def main():
                 else:
                     scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
                     color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
-                text_surf = scenario_font.render(line, True, color)
+                text_surf = get_text_surface(scenario_font, line, color)
                 if CURRENT_HUD_ALPHA < 255:
                     text_surf = text_surf.copy()
                     text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
@@ -2258,7 +2305,7 @@ def main():
             for idx, (text, color) in enumerate(overlay_lines):
                 if not text:
                     continue
-                text_surf = font.render(text, True, color)
+                text_surf = get_text_surface(font, text, color)
                 overlay_surface.blit(
                     text_surf,
                     (overlay_padding_x, overlay_padding_y + idx * line_height),
@@ -2272,7 +2319,9 @@ def main():
             screen.blit(overlay_surface, overlay_rect)
 
         if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
-            flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
+            flash_surf = get_text_surface(
+                scenario_font, scenario_flash_text, HUD_TEXT_COLOR
+            )
             if CURRENT_HUD_ALPHA < 255:
                 flash_surf = flash_surf.copy()
                 flash_surf.set_alpha(int(CURRENT_HUD_ALPHA))
@@ -2280,7 +2329,7 @@ def main():
             screen.blit(flash_surf, flash_rect)
 
         fps_value = clock.get_fps()
-        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
+        fps_text = get_text_surface(font_fps, f"FPS: {fps_value:.1f}", HUD_TEXT_COLOR)
         combined_alpha = FPS_TEXT_ALPHA
         if CURRENT_HUD_ALPHA < 255:
             combined_alpha = min(combined_alpha, int(CURRENT_HUD_ALPHA))
