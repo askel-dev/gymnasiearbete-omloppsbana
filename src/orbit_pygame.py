@@ -41,39 +41,46 @@ def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) ->
     return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
 
+_EARTH_SPRITE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "assets", "earth_sprite_2.png"
+)
+_EARTH_SPRITE_BASE: pygame.Surface | None = None
+_EARTH_SPRITE_CACHE: dict[int, pygame.Surface] = {}
+
+
+def _load_earth_sprite_base() -> pygame.Surface:
+    global _EARTH_SPRITE_BASE
+    if _EARTH_SPRITE_BASE is None:
+        _EARTH_SPRITE_BASE = pygame.image.load(_EARTH_SPRITE_PATH).convert_alpha()
+    return _EARTH_SPRITE_BASE
+
+
+def _get_scaled_earth_sprite(diameter: int) -> pygame.Surface:
+    if diameter <= 0:
+        raise ValueError("Earth sprite diameter must be positive")
+
+    cached = _EARTH_SPRITE_CACHE.get(diameter)
+    if cached is not None:
+        return cached
+
+    base_sprite = _load_earth_sprite_base()
+    scaled = pygame.transform.smoothscale(base_sprite, (diameter, diameter))
+    _EARTH_SPRITE_CACHE[diameter] = scaled
+    return scaled
+
+
 def draw_earth(
     surface: pygame.Surface,
     position: tuple[int, int],
     radius: int,
-    *,
-    atmosphere_thickness: int = 0,
 ) -> None:
     if radius <= 0:
         return
 
-    atmosphere_thickness = max(0, atmosphere_thickness)
-    total_radius = radius + atmosphere_thickness
-    diameter = total_radius * 2
-    earth_surface = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
-    center = (total_radius, total_radius)
-
-    if atmosphere_thickness > 0:
-        pygame.draw.circle(
-            earth_surface,
-            ATMOSPHERE_COLOR,
-            center,
-            total_radius,
-        )
-
-    pygame.draw.circle(
-        earth_surface,
-        PLANET_COLOR,
-        center,
-        radius,
-    )
-
-    rect = earth_surface.get_rect(center=position)
-    surface.blit(earth_surface, rect)
+    diameter = radius * 2
+    sprite = _get_scaled_earth_sprite(diameter)
+    rect = sprite.get_rect(center=position)
+    surface.blit(sprite, rect)
 
 
 @lru_cache(maxsize=64)
@@ -626,7 +633,6 @@ MAX_RENDERED_ORBIT_POINTS = 800
 WIDTH, HEIGHT = 1000, 800
 BACKGROUND_COLOR = (0, 34, 72)
 PLANET_COLOR = (255, 183, 77)
-ATMOSPHERE_COLOR = (120, 186, 255, 90)
 SAT_COLOR_CORE = (65, 224, 162)
 SAT_COLOR_EDGE = (42, 170, 226)
 SAT_HIGHLIGHT_COLOR = (206, 255, 250)
@@ -1897,18 +1903,10 @@ def main():
             screen.blit(orbit_layer, (0, 0))
 
         earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
-        atmosphere_thickness_px = 0
-        if ppm > 0.0:
-            atmosphere_thickness_px = max(1, int(ATM_ALTITUDE * ppm))
-            atmosphere_thickness_px = min(
-                atmosphere_thickness_px,
-                max(8, earth_radius_px // 5),
-            )
         draw_earth(
             screen,
             earth_screen_pos,
             earth_radius_px,
-            atmosphere_thickness=atmosphere_thickness_px,
         )
 
         if impact_info is not None and shock_ring_start is not None:
