@@ -430,13 +430,36 @@ class ParallaxLayer:
             return
         mouse_shift_x = mouse_offset[0] * self.mouse_factor * width
         mouse_shift_y = mouse_offset[1] * self.mouse_factor * height
-        ox = (self.offset_x + mouse_shift_x) % width
-        oy = (self.offset_y + mouse_shift_y) % height
+        offset_x = (self.offset_x + mouse_shift_x) % width
+        offset_y = (self.offset_y + mouse_shift_y) % height
+        ox = int(offset_x)
+        oy = int(offset_y)
+
         base_x = -ox
         base_y = -oy
-        for dx in (0, width):
-            for dy in (0, height):
-                target.blit(self.surface, (int(base_x + dx), int(base_y + dy)))
+        target.blit(self.surface, (base_x, base_y))
+
+        if ox:
+            horizontal_rect = pygame.Rect(0, 0, ox, height)
+            target.blit(
+                self.surface,
+                (width - ox, base_y),
+                area=horizontal_rect,
+            )
+        if oy:
+            vertical_rect = pygame.Rect(0, 0, width, oy)
+            target.blit(
+                self.surface,
+                (base_x, height - oy),
+                area=vertical_rect,
+            )
+        if ox and oy:
+            corner_rect = pygame.Rect(0, 0, ox, oy)
+            target.blit(
+                self.surface,
+                (width - ox, height - oy),
+                area=corner_rect,
+            )
 
 
 def generate_menu_parallax_layers(width: int, height: int) -> list[ParallaxLayer]:
