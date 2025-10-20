@@ -961,6 +961,29 @@ class Button:
 # =======================
 #   HUVUDPROGRAM
 # =======================
+
+
+def _set_display_mode_with_vsync(
+    size: tuple[int, int],
+    flags: int = 0,
+) -> pygame.Surface:
+    """Create the display surface with double buffering and vsync when available."""
+
+    flags |= DOUBLEBUF
+
+    try:
+        return pygame.display.set_mode(size, flags, vsync=1)
+    except TypeError:
+        # Older pygame versions may not support the ``vsync`` keyword argument.
+        return pygame.display.set_mode(size, flags)
+    except pygame.error as err:
+        # Some platforms reject the vsync request even if the keyword is supported.
+        try:
+            return pygame.display.set_mode(size, flags)
+        except pygame.error:
+            raise err
+
+
 def main():
     pygame.init()
     pygame.display.set_caption("Gymnasiearbete - Simulering av omloppsbana")
@@ -977,16 +1000,19 @@ def main():
     if info.current_w and info.current_h:
         try:
             os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
-            screen = pygame.display.set_mode((info.current_w, info.current_h), borderless_flags)
+            screen = _set_display_mode_with_vsync(
+                (info.current_w, info.current_h),
+                borderless_flags,
+            )
         except pygame.error:
             screen = None
 
     if screen is None:
         try:
-            screen = pygame.display.set_mode((0, 0), fullscreen_flags)
+            screen = _set_display_mode_with_vsync((0, 0), fullscreen_flags)
         except pygame.error:
             # Fallback till fönsterläge om fullscreen inte stöds.
-            screen = pygame.display.set_mode(fallback_resolution, DOUBLEBUF)
+            screen = _set_display_mode_with_vsync(fallback_resolution, DOUBLEBUF)
 
     screen_width, screen_height = screen.get_size()
     update_display_metrics(screen_width, screen_height)
