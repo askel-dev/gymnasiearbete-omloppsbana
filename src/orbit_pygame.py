@@ -8,12 +8,16 @@ import pygame
 from pygame.locals import *  # noqa: F401,F403 - required for constants such as FULLSCREEN
 import sys
 import numpy as np
-from collections import deque
+from collections import deque, OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
 
 
-_TEXT_SURFACE_CACHE: dict[tuple[int, str, tuple[int, int, int] | tuple[int, int, int, int]], pygame.Surface] = {}
+_TEXT_SURFACE_CACHE_MAX_SIZE = 256
+_TEXT_SURFACE_CACHE: OrderedDict[
+    tuple[int, str, tuple[int, int, int] | tuple[int, int, int, int]],
+    pygame.Surface,
+] = OrderedDict()
 
 
 def get_text_surface(
@@ -28,10 +32,15 @@ def get_text_surface(
 
     key = (id(font), text, color)
     cached = _TEXT_SURFACE_CACHE.get(key)
-    if cached is None:
-        cached = font.render(text, True, color)
-        _TEXT_SURFACE_CACHE[key] = cached
-    return cached
+    if cached is not None:
+        _TEXT_SURFACE_CACHE.move_to_end(key)
+        return cached
+
+    rendered = font.render(text, True, color)
+    _TEXT_SURFACE_CACHE[key] = rendered
+    if len(_TEXT_SURFACE_CACHE) > _TEXT_SURFACE_CACHE_MAX_SIZE:
+        _TEXT_SURFACE_CACHE.popitem(last=False)
+    return rendered
 
 from logging_utils import RunLogger
 
