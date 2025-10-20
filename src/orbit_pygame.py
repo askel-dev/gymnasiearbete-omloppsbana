@@ -760,7 +760,17 @@ MENU_PLANET_IMAGE_PATH = os.path.join(
 _MENU_PLANET_CACHE: dict[tuple[int, int], pygame.Surface] = {}
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
-    return 0.35 * (min(width, height) / (2.0 * np.linalg.norm(R0)))
+    """Compute the rendering scale in pixels per meter.
+
+    The original implementation used a heavy downscale (0.35× of the natural
+    screen fit) which made the satellite appear glued to Earth despite the
+    physical orbit radius being correct. Raising the factor to 0.6 keeps the
+    simulation true-to-scale while better utilising the available canvas so the
+    nominal ~7 000 km orbit has visibly more separation from the planet.
+    """
+
+    base_scale = min(width, height) / (2.0 * np.linalg.norm(R0))
+    return 0.60 * base_scale
 
 
 def update_display_metrics(width: int, height: int) -> None:
