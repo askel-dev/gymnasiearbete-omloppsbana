@@ -336,6 +336,8 @@ def draw_coordinate_grid(
     world_top = cy + half_height_world
 
     line_color = (*GRID_LINE_COLOR, GRID_LINE_ALPHA)
+    origin_line_color = (*GRID_LINE_COLOR, min(255, GRID_LINE_ALPHA + 150))
+    origin_line_width = 3
 
     start_x = math.floor(world_left / spacing) * spacing
     max_vertical = int(math.ceil((world_right - world_left) / spacing)) + 3
@@ -344,8 +346,12 @@ def draw_coordinate_grid(
         if x_world > world_right + spacing:
             break
         sx, _ = world_to_screen(x_world, cy, ppm, camera_center)
-        if -width <= sx <= 2 * width:
-            pygame.draw.line(surface, line_color, (sx, 0), (sx, height), 1)
+        if 0 <= sx <= width:
+            draw_x = int(clamp(sx, 0, width))
+            is_origin_line = abs(x_world) < spacing * 0.5
+            color = origin_line_color if is_origin_line else line_color
+            width_px = origin_line_width if is_origin_line else 1
+            pygame.draw.line(surface, color, (draw_x, 0), (draw_x, height), width_px)
             if 0 <= sx <= width and GRID_LABEL_MARGIN < sx < width - 140:
                 label_text = _format_megameters(x_world)
                 if label_text:
@@ -365,8 +371,12 @@ def draw_coordinate_grid(
         if y_world > world_top + spacing:
             break
         _, sy = world_to_screen(cx, y_world, ppm, camera_center)
-        if -height <= sy <= 2 * height:
-            pygame.draw.line(surface, line_color, (0, sy), (width, sy), 1)
+        if 0 <= sy <= height:
+            draw_y = int(clamp(sy, 0, height))
+            is_origin_line = abs(y_world) < spacing * 0.5
+            color = origin_line_color if is_origin_line else line_color
+            width_px = origin_line_width if is_origin_line else 1
+            pygame.draw.line(surface, color, (0, draw_y), (width, draw_y), width_px)
             if 0 <= sy <= height and GRID_LABEL_MARGIN * 2 < sy < height - GRID_LABEL_MARGIN:
                 label_text = _format_megameters(y_world)
                 if label_text:
@@ -380,7 +390,7 @@ def draw_coordinate_grid(
                         surface.blit(label_surf, rect)
 
     axis_color = GRID_LABEL_COLOR
-    axis_label = axis_font.render("X [Mm]", True, axis_color)
+    axis_label = axis_font.render("Y [Mm]", True, axis_color)
     if GRID_AXIS_LABEL_ALPHA < 255:
         axis_label = axis_label.copy()
         axis_label.set_alpha(GRID_AXIS_LABEL_ALPHA)
@@ -388,7 +398,7 @@ def draw_coordinate_grid(
     axis_rect.bottomright = (width - GRID_LABEL_MARGIN, height - GRID_LABEL_MARGIN)
     surface.blit(axis_label, axis_rect)
 
-    y_axis_label = axis_font.render("Y [Mm]", True, axis_color)
+    y_axis_label = axis_font.render("X [Mm]", True, axis_color)
     if GRID_AXIS_LABEL_ALPHA < 255:
         y_axis_label = y_axis_label.copy()
         y_axis_label.set_alpha(GRID_AXIS_LABEL_ALPHA)
