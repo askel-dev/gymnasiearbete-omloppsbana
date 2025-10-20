@@ -50,14 +50,28 @@ def draw_earth(
 ) -> None:
     if radius <= 0:
         return
-    diameter = radius * 2
+
+    atmosphere_thickness = max(0, atmosphere_thickness)
+    total_radius = radius + atmosphere_thickness
+    diameter = total_radius * 2
     earth_surface = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+    center = (total_radius, total_radius)
+
+    if atmosphere_thickness > 0:
+        pygame.draw.circle(
+            earth_surface,
+            ATMOSPHERE_COLOR,
+            center,
+            total_radius,
+        )
+
     pygame.draw.circle(
         earth_surface,
         PLANET_COLOR,
-        (radius, radius),
+        center,
         radius,
     )
+
     rect = earth_surface.get_rect(center=position)
     surface.blit(earth_surface, rect)
 
@@ -612,6 +626,7 @@ MAX_RENDERED_ORBIT_POINTS = 800
 WIDTH, HEIGHT = 1000, 800
 BACKGROUND_COLOR = (0, 34, 72)
 PLANET_COLOR = (255, 183, 77)
+ATMOSPHERE_COLOR = (120, 186, 255, 90)
 SAT_COLOR_CORE = (65, 224, 162)
 SAT_COLOR_EDGE = (42, 170, 226)
 SAT_HIGHLIGHT_COLOR = (206, 255, 250)
