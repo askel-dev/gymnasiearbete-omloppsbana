@@ -13,7 +13,7 @@ Every run initialises a dedicated folder inside `data/runs/` using the pattern
 - `events.csv` — sparse log of interesting events such as pericentre passages or
   impacts.
 
-The helper `RunLogger` class in `src/logging_utils.py` buffers writes to avoid
+The helper `RunLogger` class in `src/orbit_sim/core/logging_utils.py` buffers writes to avoid
 introducing stutter in the Pygame loop. Time-series samples are flushed in
 chunks of 200 rows and events in chunks of 50 rows, or immediately when the
 simulation closes.
