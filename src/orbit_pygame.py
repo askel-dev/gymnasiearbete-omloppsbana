@@ -4,6 +4,8 @@ import math
 import os
 import random
 import time
+from pathlib import Path
+
 import pygame
 from pygame.locals import *  # noqa: F401,F403 - required for constants such as FULLSCREEN
 import sys
@@ -64,6 +66,35 @@ def draw_text_with_shadow(
         x, y = position
         surface.blit(shadow_surf, (x + 1, y + 1))
     surface.blit(text_surf, position)
+
+
+SETTINGS_DIR = Path.home() / ".orbit_sim"
+SETTINGS_PATH = SETTINGS_DIR / "settings.json"
+
+
+def load_user_settings() -> dict[str, object]:
+    """Return persisted runtime settings if the JSON file is readable."""
+
+    try:
+        with SETTINGS_PATH.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def save_user_settings(settings: dict[str, object]) -> None:
+    """Persist runtime settings, ignoring filesystem errors."""
+
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        with SETTINGS_PATH.open("w", encoding="utf-8") as fh:
+            json.dump(settings, fh, indent=2, sort_keys=True)
+    except OSError:
+        # Silently ignore failures – the simulation should continue shutting down.
+        pass
 
 
 _EARTH_SPRITE_PATH = os.path.join(
@@ -621,6 +652,7 @@ MAX_RENDERED_ORBIT_POINTS = 800
 # Dessa värden sätts om efter att displayen initierats, men behöver
 # startvärden för typkontroller och tooling.
 WIDTH, HEIGHT = 1000, 800
+WINDOWED_DEFAULT_SIZE = (WIDTH, HEIGHT)
 BACKGROUND_COLOR = (0, 34, 72)
 PLANET_COLOR = (255, 183, 77)
 SATELLITE_COLOR = (255, 255, 255)
@@ -970,33 +1002,65 @@ def main():
     CURRENT_HUD_ALPHA = float(HUD_TEXT_ALPHA_BASE)
     font_fps = pygame.font.SysFont("consolas", 14)
 
+    user_settings = load_user_settings()
+
     fullscreen_flags = FULLSCREEN | DOUBLEBUF
     borderless_flags = NOFRAME | DOUBLEBUF
-    info = pygame.display.Info()
-    fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
+    windowed_flags = RESIZABLE | DOUBLEBUF
 
-    screen: pygame.Surface | None = None
-    if info.current_w and info.current_h:
-        try:
-            os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
-            screen = _set_display_mode_with_vsync(
-                (info.current_w, info.current_h),
-                borderless_flags,
-            )
-        except pygame.error:
-            screen = None
+    def create_fullscreen_surface() -> pygame.Surface:
+        info = pygame.display.Info()
+        fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
+        screen_fs: pygame.Surface | None = None
+        if info.current_w and info.current_h:
+            try:
+                os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
+                screen_fs = _set_display_mode_with_vsync(
+                    (info.current_w, info.current_h),
+                    borderless_flags,
+                )
+            except pygame.error:
+                screen_fs = None
+        if screen_fs is None:
+            try:
+                screen_fs = _set_display_mode_with_vsync((0, 0), fullscreen_flags)
+            except pygame.error:
+                screen_fs = _set_display_mode_with_vsync(fallback_resolution, DOUBLEBUF)
+        return screen_fs
 
-    if screen is None:
-        try:
-            screen = _set_display_mode_with_vsync((0, 0), fullscreen_flags)
-        except pygame.error:
-            # Fallback till fönsterläge om fullscreen inte stöds.
-            screen = _set_display_mode_with_vsync(fallback_resolution, DOUBLEBUF)
+    def create_windowed_surface() -> pygame.Surface:
+        return _set_display_mode_with_vsync(WINDOWED_DEFAULT_SIZE, windowed_flags)
 
-    screen_width, screen_height = screen.get_size()
-    update_display_metrics(screen_width, screen_height)
+    fullscreen_setting = user_settings.get("fullscreen")
+    fullscreen_preference = fullscreen_setting if isinstance(fullscreen_setting, bool) else True
 
-    overlay_size = (WIDTH, HEIGHT)
+    fullscreen_enabled = fullscreen_preference
+    try:
+        if fullscreen_preference:
+            screen = create_fullscreen_surface()
+        else:
+            screen = create_windowed_surface()
+            fullscreen_enabled = False
+    except pygame.error:
+        if fullscreen_preference:
+            try:
+                screen = create_windowed_surface()
+                fullscreen_enabled = False
+            except pygame.error:
+                screen = _set_display_mode_with_vsync(WINDOWED_DEFAULT_SIZE, windowed_flags)
+                fullscreen_enabled = False
+        else:
+            try:
+                screen = create_fullscreen_surface()
+                fullscreen_enabled = True
+            except pygame.error:
+                screen = _set_display_mode_with_vsync(WINDOWED_DEFAULT_SIZE, windowed_flags)
+                fullscreen_enabled = False
+
+    current_size = screen.get_size()
+    update_display_metrics(*current_size)
+
+    overlay_size = current_size
     orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
     label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
     grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
@@ -1112,7 +1176,10 @@ def main():
         except pygame.error:
             menu_planet_image = None
 
-    current_scenario_key = DEFAULT_SCENARIO_KEY
+    saved_scenario_key = user_settings.get("scenario_key")
+    if not (isinstance(saved_scenario_key, str) and saved_scenario_key in SCENARIOS):
+        saved_scenario_key = DEFAULT_SCENARIO_KEY
+    current_scenario_key = saved_scenario_key
     scenario_flash_text: str | None = None
     scenario_flash_time = 0.0
 
@@ -1193,6 +1260,44 @@ def main():
     is_dragging_camera = False
     drag_last_pos = (0, 0)
 
+    saved_zoom = user_settings.get("zoom_ppm")
+    if isinstance(saved_zoom, (int, float)):
+        ppm = clamp(float(saved_zoom), MIN_PPM, MAX_PPM)
+        ppm_target = ppm
+    else:
+        ppm = clamp(ppm, MIN_PPM, MAX_PPM)
+        ppm_target = ppm
+
+    saved_speed = user_settings.get("real_time_speed")
+    if isinstance(saved_speed, (int, float)):
+        real_time_speed = clamp(float(saved_speed), 0.1, 10_000.0)
+
+    saved_grid = user_settings.get("grid_overlay_enabled")
+    if isinstance(saved_grid, bool):
+        grid_overlay_enabled = saved_grid
+
+    saved_velocity_toggle = user_settings.get("show_velocity_arrow")
+    if isinstance(saved_velocity_toggle, bool):
+        show_velocity_arrow = saved_velocity_toggle
+
+    saved_camera_mode = user_settings.get("camera_mode")
+    if isinstance(saved_camera_mode, str) and saved_camera_mode in {"earth", "satellite", "manual"}:
+        camera_mode = saved_camera_mode
+
+    saved_camera_center = user_settings.get("camera_center")
+    if (
+        isinstance(saved_camera_center, (list, tuple))
+        and len(saved_camera_center) == 2
+    ):
+        try:
+            camera_center[:] = (
+                float(saved_camera_center[0]),
+                float(saved_camera_center[1]),
+            )
+        except (TypeError, ValueError):
+            pass
+    camera_target[:] = camera_center
+
     orbit_prediction_period: float | None = None
     orbit_prediction_points: list[tuple[float, float]] = []
 
@@ -1247,9 +1352,9 @@ def main():
         v = scenario_velocity_vector()
         t_sim = 0.0
         paused = False
-        ppm = PIXELS_PER_METER
-        ppm_target = ppm
-        real_time_speed = REAL_TIME_SPEED
+        ppm_target = clamp(ppm_target, MIN_PPM, MAX_PPM)
+        ppm = clamp(ppm_target, MIN_PPM, MAX_PPM)
+        real_time_speed = clamp(real_time_speed, 0.1, 10_000.0)
         accumulator = 0.0
         last_time = time.perf_counter()
         log_step_counter = 0
@@ -1261,10 +1366,7 @@ def main():
         pinned_markers.clear()
         pin_feedback_text = None
         pin_feedback_time = 0.0
-        camera_center[:] = (0.0, 0.0)
-        camera_target[:] = (0.0, 0.0)
-        camera_mode = "earth"
-        show_velocity_arrow = True
+        camera_target[:] = camera_center
         is_dragging_camera = False
         orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
         impact_info = None
@@ -1397,7 +1499,20 @@ def main():
         state = "running"
         init_run_logging()
 
+    def collect_user_settings() -> dict[str, object]:
+        return {
+            "scenario_key": current_scenario_key,
+            "camera_center": [float(camera_center[0]), float(camera_center[1])],
+            "zoom_ppm": float(ppm_target),
+            "camera_mode": camera_mode,
+            "grid_overlay_enabled": bool(grid_overlay_enabled),
+            "show_velocity_arrow": bool(show_velocity_arrow),
+            "real_time_speed": float(real_time_speed),
+            "fullscreen": bool(fullscreen_enabled),
+        }
+
     def quit_app():
+        save_user_settings(collect_user_settings())
         close_logger()
         pygame.quit()
         sys.exit()
@@ -1516,6 +1631,20 @@ def main():
 
     update_sim_button_layout()
 
+    def toggle_fullscreen_mode() -> None:
+        nonlocal screen, fullscreen_enabled, overlay_size
+        target_fullscreen = not fullscreen_enabled
+        try:
+            screen = (
+                create_fullscreen_surface()
+                if target_fullscreen
+                else create_windowed_surface()
+            )
+        except pygame.error:
+            return
+        fullscreen_enabled = target_fullscreen
+        overlay_size = (-1, -1)
+
     def is_over_button(pos: tuple[int, int]) -> bool:
         if state == "menu":
             return any(btn.rect.collidepoint(pos) for btn in menu_buttons)
@@ -1547,6 +1676,9 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     quit_app()
+                    continue
+                if event.key == pygame.K_F11:
+                    toggle_fullscreen_mode()
                     continue
                 if event.key in scenario_shortcut_map:
                     set_scenario(scenario_shortcut_map[event.key])
