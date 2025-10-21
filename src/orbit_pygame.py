@@ -251,26 +251,6 @@ def draw_velocity_arrow(
     pygame.draw.polygon(surface, VEL_ARROW_COLOR, [end, left, right])
 
 
-def draw_hotkey_overlay(surface: pygame.Surface, font: pygame.font.Font, show_help: bool) -> None:
-    if not show_help:
-        return
-    pad = 10
-    line_spacing = 22
-    entries = [f"{key}  –  {desc}" for key, desc in HOTKEYS]
-    if not entries:
-        return
-    width = max(font.size(entry)[0] for entry in entries) + pad * 2
-    height = line_spacing * len(entries) + pad * 2
-    panel = pygame.Surface((width, height), pygame.SRCALPHA)
-    panel.fill((0, 0, 0, 160))
-    for index, entry in enumerate(entries):
-        text_surf = get_text_surface(font, entry, (230, 230, 240))
-        text_rect = text_surf.get_rect()
-        text_rect.topleft = (pad, pad + index * line_spacing)
-        panel.blit(text_surf, text_rect)
-    surface.blit(panel, (12, 12))
-
-
 def generate_starfield(num_stars: int) -> list[dict[str, object]]:
     stars: list[dict[str, object]] = []
     for _ in range(num_stars):
@@ -299,49 +279,6 @@ def generate_starfield(num_stars: int) -> list[dict[str, object]]:
             }
         )
     return stars
-
-
-def auto_scale_distance(value_m: float) -> tuple[float, str]:
-    abs_value = abs(value_m)
-    if abs_value >= 1_000_000.0:
-        return value_m / 1_000_000.0, "Mm"
-    if abs_value >= 1_000.0:
-        return value_m / 1_000.0, "km"
-    return value_m, "m"
-
-
-def format_distance(value_m: float) -> str:
-    scaled, unit = auto_scale_distance(value_m)
-    abs_scaled = abs(scaled)
-    if abs_scaled >= 1000:
-        text = f"{scaled:,.0f}"
-    elif abs_scaled >= 100:
-        text = f"{scaled:,.1f}"
-    elif abs_scaled >= 10:
-        text = f"{scaled:,.2f}"
-    else:
-        text = f"{scaled:,.3f}"
-    text = text.rstrip("0").rstrip(".")
-    if not text:
-        text = "0"
-    return f"{text} {unit}"
-
-
-def format_speed(value_m_per_s: float) -> str:
-    scaled, unit = auto_scale_distance(value_m_per_s)
-    abs_scaled = abs(scaled)
-    if abs_scaled >= 1000:
-        text = f"{scaled:,.0f}"
-    elif abs_scaled >= 100:
-        text = f"{scaled:,.1f}"
-    elif abs_scaled >= 10:
-        text = f"{scaled:,.2f}"
-    else:
-        text = f"{scaled:,.3f}"
-    text = text.rstrip("0").rstrip(".")
-    if not text:
-        text = "0"
-    return f"{text} {unit}/s"
 
 
 def draw_starfield(surface: pygame.Surface, camera_center: np.ndarray, ppm: float) -> None:
@@ -677,83 +614,6 @@ ESCAPE_RADIUS_FACTOR = 20.0
 ORBIT_PREDICTION_INTERVAL = 1.0
 MAX_ORBIT_PREDICTION_SAMPLES = 2_000
 MAX_RENDERED_ORBIT_POINTS = 800
-TIME_SPEED_MIN = 0.01
-TIME_SPEED_MAX = 10_000.0
-TIME_SPEED_PRESETS = {1: 0.25, 2: 1.0, 3: 4.0}
-TIME_SPEED_NUDGE_FACTOR = 0.10
-CAMERA_PAN_SPEED = 120_000.0
-CAMERA_FAST_MULTIPLIER = 4.0
-CAMERA_DRAG_BUTTONS = {1, 3}
-CAMERA_SNAP_SPACING = 1_000_000.0
-ZOOM_SMOOTHING = 0.25
-ZOOM_STEP_FACTOR = 1.1
-ZOOM_TO_FIT_PADDING = 1.25
-SCENARIO_TOAST_DURATION = 1.5
-TOAST_LIFETIME = 2.5
-TOAST_FADE_DURATION = 0.4
-STATUS_BADGE_GAP = 8
-STATUS_BADGE_PADDING = (12, 6)
-STATUS_BADGE_COLOR = (18, 36, 64, 180)
-STATUS_BADGE_TEXT_COLOR = (230, 236, 246)
-STATUS_BADGE_BORDER = (120, 168, 255, 200)
-TOOLTIP_PADDING = (12, 8)
-TOOLTIP_BG_COLOR = (12, 18, 30, 210)
-TOOLTIP_TEXT_COLOR = (234, 241, 255)
-TOOLTIP_BORDER_COLOR = (120, 168, 255, 160)
-TOOLTIP_SHADOW_OFFSET = (2, 2)
-
-SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".orbit_sim")
-SETTINGS_FILE = os.path.join(SETTINGS_PATH, "settings.json")
-SETTINGS_KEYS = (
-    "scenario_key",
-    "camera_center",
-    "ppm",
-    "time_scale",
-    "show_grid",
-    "show_velocity",
-    "show_orbit",
-    "fullscreen",
-)
-
-HOTKEYS = [
-    ("Space", "Pause/Resume"),
-    (".", "Step (when paused)"),
-    ("1/2/3", "Time speed 0.25x/1x/4x"),
-    ("[/]", "Time speed -/+ 10%"),
-    ("WASD or RMB", "Pan"),
-    ("Shift", "Faster pan"),
-    ("Scroll", "Zoom to cursor"),
-    ("G", "Toggle grid"),
-    ("V", "Toggle velocity vector"),
-    ("O", "Toggle orbit prediction"),
-    ("F", "Zoom to fit"),
-    ("Ctrl+1-9", "Load scenario"),
-    ("H", "Hotkey overlay"),
-    ("C", "Cinematic mode"),
-    ("M", "Cycle camera lock"),
-    ("R", "Reset state"),
-    ("Ctrl+R", "Reset scenario defaults"),
-    ("F11", "Fullscreen"),
-    ("F12", "Screenshot"),
-]
-
-
-def save_settings(state: dict[str, object]) -> None:
-    try:
-        os.makedirs(SETTINGS_PATH, exist_ok=True)
-        data = {key: state.get(key) for key in SETTINGS_KEYS}
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as handle:
-            json.dump(data, handle)
-    except OSError:
-        pass
-
-
-def load_settings() -> dict[str, object]:
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
@@ -846,8 +706,6 @@ GRID_LABEL_ALPHA = 180
 GRID_AXIS_LABEL_ALPHA = 160
 GRID_LABEL_MARGIN = 10
 
-CAMERA_SNAP_SPACING = GRID_SPACING_METERS
-
 STARFIELD: list[dict[str, object]] = []
 MENU_PLANET_IMAGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "assets", "menu_planet.png"
@@ -931,20 +789,6 @@ def world_to_screen(x, y, ppm, camera_center=(0.0, 0.0)):
     sx = WIDTH // 2 + int((x - cx) * ppm)
     sy = HEIGHT // 2 - int((y - cy) * ppm)
     return sx, sy
-
-
-def screen_to_world(sx: float, sy: float, ppm: float, camera_center=(0.0, 0.0)) -> tuple[float, float]:
-    if ppm <= 0.0:
-        return float(camera_center[0]), float(camera_center[1])
-    cx, cy = camera_center
-    wx = (sx - WIDTH / 2) / ppm + cx
-    wy = (HEIGHT / 2 - sy) / ppm + cy
-    return float(wx), float(wy)
-
-
-def lerp(a: float, b: float, alpha: float) -> float:
-    return a + (b - a) * alpha
-
 
 def clamp(val, lo, hi):
     return max(lo, min(hi, val))
@@ -1126,20 +970,28 @@ def main():
     CURRENT_HUD_ALPHA = float(HUD_TEXT_ALPHA_BASE)
     font_fps = pygame.font.SysFont("consolas", 14)
 
+    fullscreen_flags = FULLSCREEN | DOUBLEBUF
+    borderless_flags = NOFRAME | DOUBLEBUF
     info = pygame.display.Info()
     fallback_resolution = (info.current_w or WIDTH, info.current_h or HEIGHT)
-    settings = load_settings()
-    fullscreen_mode = bool(settings.get("fullscreen", True))
 
-    def create_screen(fullscreen: bool) -> pygame.Surface:
-        if fullscreen:
-            try:
-                return _set_display_mode_with_vsync((0, 0), FULLSCREEN)
-            except pygame.error:
-                return _set_display_mode_with_vsync(fallback_resolution, DOUBLEBUF)
-        return _set_display_mode_with_vsync(fallback_resolution, DOUBLEBUF)
+    screen: pygame.Surface | None = None
+    if info.current_w and info.current_h:
+        try:
+            os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
+            screen = _set_display_mode_with_vsync(
+                (info.current_w, info.current_h),
+                borderless_flags,
+            )
+        except pygame.error:
+            screen = None
 
-    screen = create_screen(fullscreen_mode)
+    if screen is None:
+        try:
+            screen = _set_display_mode_with_vsync((0, 0), fullscreen_flags)
+        except pygame.error:
+            # Fallback till fönsterläge om fullscreen inte stöds.
+            screen = _set_display_mode_with_vsync(fallback_resolution, DOUBLEBUF)
 
     screen_width, screen_height = screen.get_size()
     update_display_metrics(screen_width, screen_height)
@@ -1261,9 +1113,6 @@ def main():
             menu_planet_image = None
 
     current_scenario_key = DEFAULT_SCENARIO_KEY
-    saved_scenario = settings.get("scenario_key")
-    if isinstance(saved_scenario, str) and saved_scenario in SCENARIOS:
-        current_scenario_key = saved_scenario
     scenario_flash_text: str | None = None
     scenario_flash_time = 0.0
 
@@ -1296,9 +1145,9 @@ def main():
         if index <= len(keypad_key_codes):
             scenario_shortcut_map[keypad_key_codes[index - 1]] = scenario_key
 
-    scenario_panel_title = "Scenario Mode – Ctrl+number to switch"
+    scenario_panel_title = "Scenario Mode – press 1-5 to switch"
     scenario_help_lines = [
-        f"[Ctrl+{idx}] {SCENARIOS[key].name} – {SCENARIOS[key].description}"
+        f"[{idx}] {SCENARIOS[key].name} – {SCENARIOS[key].description}"
         for idx, key in enumerate(SCENARIO_DISPLAY_ORDER, start=1)
     ]
 
@@ -1335,47 +1184,14 @@ def main():
     paused = False
     ppm = PIXELS_PER_METER
     ppm_target = ppm
-    saved_ppm = settings.get("ppm")
-    if isinstance(saved_ppm, (int, float)) and MIN_PPM <= float(saved_ppm) <= MAX_PPM:
-        ppm = float(saved_ppm)
-        ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
-    saved_time_scale = settings.get("time_scale")
-    if isinstance(saved_time_scale, (int, float)):
-        real_time_speed = clamp(float(saved_time_scale), TIME_SPEED_MIN, TIME_SPEED_MAX)
-    grid_overlay_enabled = bool(settings.get("show_grid", False))
-    show_velocity_arrow = bool(settings.get("show_velocity", True))
-    show_orbit_prediction = bool(settings.get("show_orbit", True))
-    show_help = False
-    cinematic_mode = False
+    grid_overlay_enabled = False
+    show_velocity_arrow = True
     camera_mode = "earth"
     camera_center = np.array([0.0, 0.0], dtype=float)
     camera_target = np.array([0.0, 0.0], dtype=float)
-    saved_camera_center = settings.get("camera_center")
-    if (
-        isinstance(saved_camera_center, (list, tuple))
-        and len(saved_camera_center) == 2
-    ):
-        try:
-            cx = float(saved_camera_center[0])
-            cy = float(saved_camera_center[1])
-        except (TypeError, ValueError):
-            pass
-        else:
-            camera_center[:] = (cx, cy)
-            camera_target[:] = (cx, cy)
     is_dragging_camera = False
     drag_last_pos = (0, 0)
-    cursor_world_position = (0.0, 0.0)
-    hovered_marker: str | None = None
-    hovered_marker_pos: tuple[int, int] | None = None
-    hovered_marker_radius: float | None = None
-    toasts: deque[tuple[str, float, float]] = deque(maxlen=6)
-    status_log: deque[tuple[str, float]] = deque(maxlen=5)
-    screen_shake_end: float = 0.0
-    screen_shake_magnitude: float = 0.0
-    screen_shake_frequency = 32.0
-    step_once = False
 
     orbit_prediction_period: float | None = None
     orbit_prediction_points: list[tuple[float, float]] = []
@@ -1412,48 +1228,28 @@ def main():
             logger.close()
             logger = None
 
-    def push_toast(message: str, duration: float = TOAST_LIFETIME) -> None:
-        start = time.perf_counter()
-        toasts.append((message, start, duration))
-
-    def push_status(message: str) -> None:
-        status_log.appendleft((message, time.perf_counter()))
-        while len(status_log) > status_log.maxlen:
-            status_log.pop()
-
-    def reset(full_reset: bool = False):
+    def reset():
         nonlocal r, v, t_sim, paused, ppm, real_time_speed
         nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
         nonlocal impact_logged, escape_logged, ppm_target
         nonlocal camera_center, orbit_markers, camera_target
-        nonlocal camera_mode, is_dragging_camera, grid_overlay_enabled
+        nonlocal camera_mode, is_dragging_camera
         nonlocal orbit_prediction_period, orbit_prediction_points
         nonlocal pinned_markers, pin_feedback_text, pin_feedback_time
         nonlocal impact_info, shock_ring_start, impact_freeze_time
         nonlocal impact_overlay_reveal_time, impact_overlay_visible_since
         nonlocal atmosphere_entry_time_sim
         nonlocal atmosphere_entry_time_real, atmosphere_warning_end_time
-        nonlocal atmosphere_logged, show_velocity_arrow, show_orbit_prediction
-        nonlocal screen_shake_end, screen_shake_magnitude
-        nonlocal step_once
+        nonlocal atmosphere_logged, show_velocity_arrow
         global CURRENT_HUD_ALPHA
         close_logger()
         r = R0.copy()
         v = scenario_velocity_vector()
         t_sim = 0.0
         paused = False
-        if full_reset:
-            ppm = PIXELS_PER_METER
-            ppm_target = ppm
-            real_time_speed = REAL_TIME_SPEED
-            camera_center[:] = (0.0, 0.0)
-            camera_target[:] = (0.0, 0.0)
-            camera_mode = "earth"
-            show_velocity_arrow = True
-            grid_overlay_enabled = False
-            show_orbit_prediction = True
-        else:
-            ppm_target = clamp(ppm_target, MIN_PPM, MAX_PPM)
+        ppm = PIXELS_PER_METER
+        ppm_target = ppm
+        real_time_speed = REAL_TIME_SPEED
         accumulator = 0.0
         last_time = time.perf_counter()
         log_step_counter = 0
@@ -1462,10 +1258,13 @@ def main():
         impact_logged = False
         escape_logged = False
         orbit_markers.clear()
-        if full_reset:
-            pinned_markers.clear()
+        pinned_markers.clear()
         pin_feedback_text = None
         pin_feedback_time = 0.0
+        camera_center[:] = (0.0, 0.0)
+        camera_target[:] = (0.0, 0.0)
+        camera_mode = "earth"
+        show_velocity_arrow = True
         is_dragging_camera = False
         orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
         impact_info = None
@@ -1478,222 +1277,6 @@ def main():
         atmosphere_warning_end_time = 0.0
         atmosphere_logged = False
         CURRENT_HUD_ALPHA = float(HUD_TEXT_ALPHA_BASE)
-        step_once = False
-        status_log.clear()
-        screen_shake_end = 0.0
-        screen_shake_magnitude = 0.0
-
-    def apply_zoom_at_cursor(factor: float, *, mouse_pos: tuple[int, int] | None = None) -> None:
-        nonlocal ppm_target, camera_center, camera_target
-        if factor == 1.0:
-            return
-        if mouse_pos is None:
-            mouse_pos = pygame.mouse.get_pos()
-        camera_tuple = (float(camera_center[0]), float(camera_center[1]))
-        world_before = screen_to_world(mouse_pos[0], mouse_pos[1], ppm, camera_tuple)
-        desired_target = clamp(ppm_target * factor, MIN_PPM, MAX_PPM)
-        new_target = lerp(ppm_target, desired_target, ZOOM_SMOOTHING)
-        camera_tuple_after = (float(camera_center[0]), float(camera_center[1]))
-        world_after = screen_to_world(mouse_pos[0], mouse_pos[1], new_target, camera_tuple_after)
-        camera_center[0] += world_before[0] - world_after[0]
-        camera_center[1] += world_before[1] - world_after[1]
-        camera_target[:] = camera_center
-        ppm_target = new_target
-
-    def perform_zoom_to_fit() -> None:
-        nonlocal ppm_target, camera_center, camera_target
-        bounds: list[tuple[float, float]] = []
-        if show_orbit_prediction and orbit_prediction_points:
-            bounds.extend(orbit_prediction_points)
-        else:
-            rmag = float(np.linalg.norm(r))
-            radius = max(EARTH_RADIUS, rmag)
-            bounds.extend(
-                [
-                    (radius, 0.0),
-                    (-radius, 0.0),
-                    (0.0, radius),
-                    (0.0, -radius),
-                ]
-            )
-        bounds.append((float(r[0]), float(r[1])))
-        bounds.append((0.0, 0.0))
-        if not bounds:
-            return
-        min_x = min(x for x, _ in bounds)
-        max_x = max(x for x, _ in bounds)
-        min_y = min(y for _, y in bounds)
-        max_y = max(y for _, y in bounds)
-        width = max_x - min_x
-        height = max_y - min_y
-        if width <= 0.0 and height <= 0.0:
-            return
-        if width <= 0.0:
-            width = height
-        if height <= 0.0:
-            height = width
-        width = max(width, 1.0)
-        height = max(height, 1.0)
-        width *= ZOOM_TO_FIT_PADDING
-        height *= ZOOM_TO_FIT_PADDING
-        target_ppm_x = WIDTH / width
-        target_ppm_y = HEIGHT / height
-        target_ppm = clamp(min(target_ppm_x, target_ppm_y), MIN_PPM, MAX_PPM)
-        ppm_target = target_ppm
-        center_x = (min_x + max_x) / 2.0
-        center_y = (min_y + max_y) / 2.0
-        camera_center[:] = (center_x, center_y)
-        camera_target[:] = camera_center
-
-    def snap_camera_if_needed() -> None:
-        if not grid_overlay_enabled:
-            return
-        mods = pygame.key.get_mods()
-        if not (mods & pygame.KMOD_ALT):
-            return
-        spacing = CAMERA_SNAP_SPACING
-        if spacing <= 0.0:
-            return
-        camera_center[0] = round(camera_center[0] / spacing) * spacing
-        camera_center[1] = round(camera_center[1] / spacing) * spacing
-        camera_target[:] = camera_center
-
-    def simulate_step(dt_step: float) -> bool:
-        nonlocal r, v, t_sim, prev_r, prev_dr, orbit_markers, pinned_markers
-        nonlocal impact_logged, escape_logged, atmosphere_entry_time_sim
-        nonlocal atmosphere_entry_time_real, atmosphere_warning_end_time
-        nonlocal atmosphere_logged, log_step_counter, impact_info, shock_ring_start
-        nonlocal impact_freeze_time, impact_overlay_reveal_time, impact_overlay_visible_since
-        nonlocal paused, state, accumulator, screen_shake_end, screen_shake_magnitude
-        r, v = rk4_step(r, v, dt_step)
-        if not (np.isfinite(r).all() and np.isfinite(v).all()):
-            push_toast("Simulation error: unstable state", 2.0)
-            paused = True
-            accumulator = 0.0
-            push_status("Simulation paused due to instability")
-            return True
-        t_sim += dt_step
-        rmag = float(np.linalg.norm(r))
-        current_in_atmosphere = in_atmosphere(r)
-        if current_in_atmosphere and atmosphere_entry_time_sim is None:
-            atmosphere_entry_time_sim = float(t_sim)
-            atmosphere_entry_time_real = time.perf_counter()
-            atmosphere_warning_end_time = atmosphere_entry_time_real + ATM_WARNING_DURATION
-        event_logged = False
-        event_type: str | None = None
-        prev_radius = prev_r
-        dr = None
-        if prev_radius is not None:
-            dr = rmag - prev_radius
-            if prev_dr is not None:
-                if prev_dr < 0.0 and dr >= 0.0:
-                    event_type = "pericenter"
-                elif prev_dr > 0.0 and dr <= 0.0:
-                    event_type = "apocenter"
-        prev_dr = dr
-        prev_r = rmag
-
-        if event_type is not None:
-            orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
-            refresh_pinned_marker(event_type)
-
-        vmag = float(np.linalg.norm(v))
-        eps = float(energy_specific(r, v))
-        e_val = float(eccentricity(r, v))
-        impact_triggered = not impact_logged and rmag <= EARTH_RADIUS
-
-        if logger is not None:
-            log_step_counter += 1
-
-            if event_type is not None:
-                logger.log_event(
-                    [
-                        float(t_sim),
-                        event_type,
-                        rmag,
-                        vmag,
-                        json.dumps({"ecc": e_val, "energy": eps}),
-                    ]
-                )
-                event_logged = True
-
-            if impact_triggered:
-                logger.log_event(
-                    [
-                        float(t_sim),
-                        "impact",
-                        rmag,
-                        vmag,
-                        json.dumps({"penetration": EARTH_RADIUS - rmag, "energy": eps}),
-                    ]
-                )
-                event_logged = True
-
-            if (
-                atmosphere_entry_time_sim is not None
-                and not atmosphere_logged
-                and current_in_atmosphere
-            ):
-                logger.log_event(
-                    [
-                        float(t_sim),
-                        "atmosphere_entry",
-                        rmag,
-                        vmag,
-                        json.dumps({"altitude": rmag - EARTH_RADIUS, "energy": eps}),
-                    ]
-                )
-                atmosphere_logged = True
-                event_logged = True
-
-            if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
-                logger.log_event(
-                    [
-                        float(t_sim),
-                        "escape",
-                        rmag,
-                        vmag,
-                        json.dumps({"energy": eps, "ecc": e_val}),
-                    ]
-                )
-                escape_logged = True
-                event_logged = True
-
-            if log_step_counter >= LOG_EVERY_STEPS or event_logged:
-                log_state(dt_step)
-                log_step_counter = 0
-
-        if impact_triggered:
-            impact_logged = True
-            if impact_info is None:
-                normal = r / max(rmag, 1e-9)
-                tangent = np.array([-normal[1], normal[0]])
-                tangential_speed = float(np.dot(v, tangent))
-                radial_speed = float(np.dot(v, normal))
-                angle_rad = math.atan2(abs(radial_speed), abs(tangential_speed))
-                impact_info = {
-                    "time": float(t_sim),
-                    "speed": vmag,
-                    "angle": math.degrees(angle_rad),
-                    "radial_speed": radial_speed,
-                    "tangential_speed": tangential_speed,
-                    "position": (float(r[0]), float(r[1])),
-                }
-                shock_ring_start = time.perf_counter()
-                impact_freeze_time = shock_ring_start + IMPACT_FREEZE_DELAY
-                overlay_ready_time = shock_ring_start + IMPACT_OVERLAY_DELAY
-                if atmosphere_warning_end_time > 0.0:
-                    overlay_ready_time = max(overlay_ready_time, atmosphere_warning_end_time)
-                impact_overlay_reveal_time = overlay_ready_time
-                impact_overlay_visible_since = None
-                paused = True
-                state = "impact"
-                accumulator = 0.0
-                screen_shake_magnitude = max(screen_shake_magnitude, 8.0)
-                screen_shake_end = time.perf_counter() + 0.3
-                push_status(f"Impact at t={t_sim:,.1f} s")
-            return True
-        return False
 
     state = "menu"
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
@@ -1749,8 +1332,7 @@ def main():
         scenario = get_current_scenario()
         scenario_flash_text = f"{scenario.name} scenario loaded"
         scenario_flash_time = time.perf_counter()
-        push_toast(f"{scenario.name} loaded", SCENARIO_TOAST_DURATION)
-        reset(full_reset=True)
+        reset()
         if state == "running":
             init_run_logging()
 
@@ -1811,24 +1393,12 @@ def main():
 
     def start_simulation():
         nonlocal state
-        reset(full_reset=True)
+        reset()
         state = "running"
         init_run_logging()
 
     def quit_app():
-        nonlocal fullscreen_mode
         close_logger()
-        state_snapshot = {
-            "scenario_key": current_scenario_key,
-            "camera_center": [float(camera_center[0]), float(camera_center[1])],
-            "ppm": float(ppm_target),
-            "time_scale": float(real_time_speed),
-            "show_grid": bool(grid_overlay_enabled),
-            "show_velocity": bool(show_velocity_arrow),
-            "show_orbit": bool(show_orbit_prediction),
-            "fullscreen": bool(fullscreen_mode),
-        }
-        save_settings(state_snapshot)
         pygame.quit()
         sys.exit()
 
@@ -1895,9 +1465,9 @@ def main():
         elif previous_state != "menu":
             state = "running"
 
-    def reset_and_continue(full_reset: bool = False):
+    def reset_and_continue():
         nonlocal state, paused, impact_info, shock_ring_start
-        reset(full_reset=full_reset)
+        reset()
         state = "running"
         paused = False
         impact_info = None
@@ -1975,51 +1545,10 @@ def main():
             if event.type == pygame.QUIT:
                 quit_app()
             elif event.type == pygame.KEYDOWN:
-                mods = event.mod if hasattr(event, "mod") else pygame.key.get_mods()
                 if event.key == pygame.K_ESCAPE:
                     quit_app()
                     continue
-                if event.key == pygame.K_h:
-                    show_help = not show_help
-                    continue
-                if event.key == pygame.K_F11:
-                    fullscreen_mode = not fullscreen_mode
-                    screen = create_screen(fullscreen_mode)
-                    current_size = screen.get_size()
-                    update_display_metrics(*current_size)
-                    overlay_size = current_size
-                    orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
-                    label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
-                    grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
-                    continue
-                if event.key == pygame.K_F12:
-                    screenshot_dir = os.path.join(SETTINGS_PATH, "screenshots")
-                    os.makedirs(screenshot_dir, exist_ok=True)
-                    filename = time.strftime("orbit_%Y%m%d_%H%M%S.png")
-                    screenshot_path = os.path.join(screenshot_dir, filename)
-                    try:
-                        pygame.image.save(screen, screenshot_path)
-                        push_toast(f"Screenshot saved: {filename}")
-                    except pygame.error:
-                        push_toast("Failed to save screenshot", 1.5)
-                    continue
-                if event.key == pygame.K_c:
-                    cinematic_mode = not cinematic_mode
-                    continue
-                if event.key == pygame.K_o:
-                    show_orbit_prediction = not show_orbit_prediction
-                    push_status(
-                        "Orbit prediction ON" if show_orbit_prediction else "Orbit prediction OFF"
-                    )
-                    continue
-                if event.key == pygame.K_f:
-                    perform_zoom_to_fit()
-                    snap_camera_if_needed()
-                    continue
-                if event.key == pygame.K_PERIOD and state == "running" and paused:
-                    step_once = True
-                    continue
-                if (mods & pygame.KMOD_CTRL) and event.key in scenario_shortcut_map:
+                if event.key in scenario_shortcut_map:
                     set_scenario(scenario_shortcut_map[event.key])
                     if state == "impact":
                         state = "running"
@@ -2029,50 +1558,40 @@ def main():
                 if event.key == pygame.K_g:
                     grid_overlay_enabled = not grid_overlay_enabled
                     continue
-                if event.key == pygame.K_v:
-                    show_velocity_arrow = not show_velocity_arrow
-                    continue
-                if event.key == pygame.K_SPACE and state == "running":
-                    paused = not paused
-                    continue
-                if event.key == pygame.K_r and state in {"running", "impact"}:
-                    reset_and_continue(full_reset=bool(mods & pygame.KMOD_CTRL))
-                    continue
                 if state == "impact":
-                    if event.key == pygame.K_n:
+                    if event.key == pygame.K_r:
+                        reset_and_continue()
+                    elif event.key == pygame.K_n:
                         load_next_scenario()
                     continue
                 if state == "running":
-                    if event.key == pygame.K_n:
+                    if event.key == pygame.K_SPACE:
+                        paused = not paused
+                    elif event.key == pygame.K_r:
+                        reset_and_continue()
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
+                        ppm_target = clamp(ppm_target * 1.2, MIN_PPM, MAX_PPM)     # zoom in
+                    elif event.key == pygame.K_MINUS:
+                        ppm_target = clamp(ppm_target / 1.2, MIN_PPM, MAX_PPM)     # zoom out
+
+                    # ---- Piltangenter styr simhastighet (ingen boost längre) ----
+                    elif event.key == pygame.K_RIGHT:
+                        real_time_speed = min(real_time_speed * 1.5, 10_000.0)
+                    elif event.key == pygame.K_LEFT:
+                        real_time_speed = max(real_time_speed / 1.5, 0.1)
+                    elif event.key == pygame.K_UP:
+                        real_time_speed = min(real_time_speed * 2.0, 10_000.0)
+                    elif event.key == pygame.K_DOWN:
+                        real_time_speed = max(real_time_speed / 2.0, 0.1)
+                    elif event.key == pygame.K_n:
                         load_next_scenario()
-                        continue
-                    if event.key in (pygame.K_EQUALS, pygame.K_PLUS):
-                        apply_zoom_at_cursor(ZOOM_STEP_FACTOR)
-                        snap_camera_if_needed()
-                        continue
-                    if event.key == pygame.K_MINUS:
-                        apply_zoom_at_cursor(1.0 / ZOOM_STEP_FACTOR)
-                        snap_camera_if_needed()
-                        continue
-                    if event.key in (pygame.K_1, pygame.K_KP1, pygame.K_2, pygame.K_KP2, pygame.K_3, pygame.K_KP3):
-                        preset_index = 1 if event.key in (pygame.K_1, pygame.K_KP1) else 2 if event.key in (pygame.K_2, pygame.K_KP2) else 3
-                        preset_value = TIME_SPEED_PRESETS[preset_index]
-                        real_time_speed = preset_value
-                        push_status(f"Time scale ×{real_time_speed:g}")
-                        continue
-                    if event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
-                        factor = 1.0 + TIME_SPEED_NUDGE_FACTOR
-                        if event.key == pygame.K_LEFTBRACKET:
-                            factor = 1.0 / factor
-                        real_time_speed = clamp(real_time_speed * factor, TIME_SPEED_MIN, TIME_SPEED_MAX)
-                        push_status(f"Time scale ×{real_time_speed:g}")
-                        continue
-                    if event.key == pygame.K_m:
+                    elif event.key == pygame.K_c:
                         toggle_camera()
-                        continue
+                    elif event.key == pygame.K_v:
+                        show_velocity_arrow = not show_velocity_arrow
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if state == "running":
-                    if event.button == 1 and not is_over_button(event.pos):
+                if event.button == 1 and state == "running":
+                    if not is_over_button(event.pos):
                         clicked_marker = marker_hit_test(event.pos)
                         if clicked_marker is not None:
                             is_now_pinned = toggle_marker_pin(clicked_marker)
@@ -2086,25 +1605,14 @@ def main():
                             drag_last_pos = event.pos
                             camera_mode = "manual"
                             camera_target[:] = camera_center
-                    elif event.button in CAMERA_DRAG_BUTTONS and not is_over_button(event.pos):
-                        is_dragging_camera = True
-                        drag_last_pos = event.pos
-                        camera_mode = "manual"
-                        camera_target[:] = camera_center
-                if event.button == 4 and state == "running":
-                    apply_zoom_at_cursor(ZOOM_STEP_FACTOR, mouse_pos=event.pos)
-                    snap_camera_if_needed()
+                elif event.button == 4 and state == "running":
+                    ppm_target = clamp(ppm_target * 1.1, MIN_PPM, MAX_PPM)
                 elif event.button == 5 and state == "running":
-                    apply_zoom_at_cursor(1.0 / ZOOM_STEP_FACTOR, mouse_pos=event.pos)
-                    snap_camera_if_needed()
+                    ppm_target = clamp(ppm_target / 1.1, MIN_PPM, MAX_PPM)
             elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button in CAMERA_DRAG_BUTTONS:
+                if event.button == 1:
                     is_dragging_camera = False
             elif event.type == pygame.MOUSEMOTION:
-                camera_tuple = (float(camera_center[0]), float(camera_center[1]))
-                cursor_world_position = screen_to_world(event.pos[0], event.pos[1], ppm, camera_tuple)
-                if state == "running":
-                    hovered_marker = marker_hit_test(event.pos)
                 if is_dragging_camera and state == "running":
                     dx = event.pos[0] - drag_last_pos[0]
                     dy = event.pos[1] - drag_last_pos[1]
@@ -2113,12 +1621,10 @@ def main():
                         camera_center[1] += dy / ppm
                         camera_target[:] = camera_center
                         drag_last_pos = event.pos
-                        snap_camera_if_needed()
             elif event.type == pygame.MOUSEWHEEL:
                 if state == "running" and event.y != 0:
-                    zoom_factor = ZOOM_STEP_FACTOR ** event.y
-                    apply_zoom_at_cursor(zoom_factor)
-                    snap_camera_if_needed()
+                    zoom_factor = 1.1 ** event.y
+                    ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
             if state == "menu":
                 for btn in menu_buttons:
                     btn.handle_event(event)
@@ -2215,59 +1721,142 @@ def main():
         now = time.perf_counter()
         frame_dt_real = now - last_time
         last_time = now
+        sim_dt_target = frame_dt_real * real_time_speed
+        accumulator += sim_dt_target
 
-        if state == "running":
-            keys = pygame.key.get_pressed()
-            pan_x = 0.0
-            pan_y = 0.0
-            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-                pan_x += 1.0
-            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-                pan_x -= 1.0
-            if keys[pygame.K_w] or keys[pygame.K_UP]:
-                pan_y += 1.0
-            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-                pan_y -= 1.0
-            if pan_x or pan_y:
-                length = math.hypot(pan_x, pan_y)
-                if length > 0.0:
-                    pan_x /= length
-                    pan_y /= length
-                speed = CAMERA_PAN_SPEED * frame_dt_real
-                if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
-                    speed *= CAMERA_FAST_MULTIPLIER
-                camera_center[0] += pan_x * speed
-                camera_center[1] += pan_y * speed
-                camera_target[:] = camera_center
-                snap_camera_if_needed()
-        if not paused:
-            accumulator += frame_dt_real * real_time_speed
-        else:
+        if paused:
             accumulator = 0.0
 
-        manual_steps: list[float] = []
-        if step_once and paused:
-            manual_steps.append(DT_PHYS)
-            step_once = False
-
         time_to_simulate = accumulator if not paused else 0.0
-        scheduled_steps: list[float] = []
         if time_to_simulate > 0.0:
             steps_needed = max(1, math.ceil(time_to_simulate / DT_PHYS))
             steps_to_run = min(steps_needed, MAX_SUBSTEPS)
             dt_step = time_to_simulate / steps_to_run
-            scheduled_steps = [dt_step] * steps_to_run
+
+            for _ in range(steps_to_run):
+                r, v = rk4_step(r, v, dt_step)
+                t_sim += dt_step
+                rmag = float(np.linalg.norm(r))
+                current_in_atmosphere = in_atmosphere(r)
+                if current_in_atmosphere and atmosphere_entry_time_sim is None:
+                    atmosphere_entry_time_sim = float(t_sim)
+                    atmosphere_entry_time_real = time.perf_counter()
+                    atmosphere_warning_end_time = atmosphere_entry_time_real + ATM_WARNING_DURATION
+                event_logged = False
+                event_type: str | None = None
+                prev_radius = prev_r
+                dr = None
+                if prev_radius is not None:
+                    dr = rmag - prev_radius
+                    if prev_dr is not None:
+                        if prev_dr < 0.0 and dr >= 0.0:
+                            event_type = "pericenter"
+                        elif prev_dr > 0.0 and dr <= 0.0:
+                            event_type = "apocenter"
+                prev_dr = dr
+                prev_r = rmag
+
+                if event_type is not None:
+                    orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
+                    refresh_pinned_marker(event_type)
+
+                vmag = float(np.linalg.norm(v))
+                eps = float(energy_specific(r, v))
+                e_val = float(eccentricity(r, v))
+                impact_triggered = not impact_logged and rmag <= EARTH_RADIUS
+
+                if logger is not None:
+                    log_step_counter += 1
+
+                    if event_type is not None:
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                event_type,
+                                rmag,
+                                vmag,
+                                json.dumps({"ecc": e_val, "energy": eps}),
+                            ]
+                        )
+                        event_logged = True
+
+                    if impact_triggered:
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                "impact",
+                                rmag,
+                                vmag,
+                                json.dumps({"penetration": EARTH_RADIUS - rmag, "energy": eps}),
+                            ]
+                        )
+                        event_logged = True
+
+                    if (
+                        atmosphere_entry_time_sim is not None
+                        and not atmosphere_logged
+                        and current_in_atmosphere
+                    ):
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                "atmosphere_entry",
+                                rmag,
+                                vmag,
+                                json.dumps({"altitude": rmag - EARTH_RADIUS, "energy": eps}),
+                            ]
+                        )
+                        atmosphere_logged = True
+                        event_logged = True
+
+                    if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
+                        logger.log_event(
+                            [
+                                float(t_sim),
+                                "escape",
+                                rmag,
+                                vmag,
+                                json.dumps({"energy": eps, "ecc": e_val}),
+                            ]
+                        )
+                        escape_logged = True
+                        event_logged = True
+
+                    if log_step_counter >= LOG_EVERY_STEPS or event_logged:
+                        log_state(dt_step)
+                        log_step_counter = 0
+
+                if impact_triggered:
+                    impact_logged = True
+                    if impact_info is None:
+                        normal = r / max(rmag, 1e-9)
+                        tangent = np.array([-normal[1], normal[0]])
+                        tangential_speed = float(np.dot(v, tangent))
+                        radial_speed = float(np.dot(v, normal))
+                        angle_rad = math.atan2(abs(radial_speed), abs(tangential_speed))
+                        impact_info = {
+                            "time": float(t_sim),
+                            "speed": vmag,
+                            "angle": math.degrees(angle_rad),
+                            "radial_speed": radial_speed,
+                            "tangential_speed": tangential_speed,
+                            "position": (float(r[0]), float(r[1])),
+                        }
+                        shock_ring_start = time.perf_counter()
+                        impact_freeze_time = shock_ring_start + IMPACT_FREEZE_DELAY
+                        overlay_ready_time = shock_ring_start + IMPACT_OVERLAY_DELAY
+                        if atmosphere_warning_end_time > 0.0:
+                            overlay_ready_time = max(overlay_ready_time, atmosphere_warning_end_time)
+                        impact_overlay_reveal_time = overlay_ready_time
+                        impact_overlay_visible_since = None
+                        paused = True
+                        state = "impact"
+                        accumulator = 0.0
+                        break
+
             accumulator = 0.0
 
-        for dt_step in (*scheduled_steps, *manual_steps):
-            if simulate_step(dt_step):
-                break
-
         now_time = time.perf_counter()
-        while toasts and now_time - toasts[0][1] > toasts[0][2] + TOAST_FADE_DURATION:
-            toasts.popleft()
-        while status_log and now_time - status_log[-1][1] > 6.0:
-            status_log.pop()
         # --- Render ---
         target_hud_alpha = float(HUD_TEXT_ALPHA_BASE)
         if (
@@ -2306,22 +1895,8 @@ def main():
         screen.fill(background_color)
         draw_starfield(screen, camera_center, ppm)
 
-        shake_world_offset = (0.0, 0.0)
-        if screen_shake_end > now_time:
-            time_left = screen_shake_end - now_time
-            shake_progress = clamp(time_left / 0.3, 0.0, 1.0)
-            amplitude = screen_shake_magnitude * shake_progress
-            offset_x = amplitude * math.sin(now_time * screen_shake_frequency)
-            offset_y = amplitude * math.cos(now_time * screen_shake_frequency) * 0.6
-            shake_world_offset = (
-                offset_x / max(ppm, 1e-6),
-                -offset_y / max(ppm, 1e-6),
-            )
-        camera_center_tuple = (
-            float(camera_center[0] + shake_world_offset[0]),
-            float(camera_center[1] + shake_world_offset[1]),
-        )
-        if grid_overlay_enabled and not cinematic_mode:
+        camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
+        if grid_overlay_enabled:
             draw_coordinate_grid(
                 grid_surface,
                 ppm,
@@ -2335,7 +1910,7 @@ def main():
         depth_ratio = atmosphere_depth_ratio(rmag)
         earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
-        if show_orbit_prediction and orbit_prediction_points:
+        if orbit_prediction_points:
             if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
                 reveal_fraction = 1.0
             else:
@@ -2352,15 +1927,7 @@ def main():
                 for px, py in sampled_points
             ]
             if len(screen_points) >= 2:
-                orbit_color = ORBIT_PRIMARY_COLOR
-                if cinematic_mode:
-                    orbit_color = (
-                        ORBIT_PRIMARY_COLOR[0],
-                        ORBIT_PRIMARY_COLOR[1],
-                        ORBIT_PRIMARY_COLOR[2],
-                        240,
-                    )
-                draw_orbit_line(orbit_layer, orbit_color, screen_points, ORBIT_LINE_WIDTH)
+                draw_orbit_line(orbit_layer, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
                 orbit_drawn = True
 
         if orbit_drawn:
@@ -2415,7 +1982,6 @@ def main():
 
         sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
         sat_radius_px = compute_satellite_radius(rmag)
-        vmag = float(np.linalg.norm(v))
         heating_intensity = depth_ratio if rmag >= EARTH_RADIUS else 1.0
         if heating_intensity > 0.0:
             draw_heating_glow(screen, sat_pos, sat_radius_px, heating_intensity)
@@ -2423,6 +1989,7 @@ def main():
 
         if show_velocity_arrow:
             vx, vy = float(v[0]), float(v[1])
+            vmag = math.hypot(vx, vy)
             if vmag > 1e-6:
                 arrow_length = clamp(
                     vmag * VEL_ARROW_SCALE,
@@ -2473,29 +2040,27 @@ def main():
                 warning_rect = warning_bg.get_rect(center=(WIDTH // 2, int(HEIGHT * 0.14)))
                 screen.blit(warning_bg, warning_rect)
 
-        hovered_marker_pos = None  # reset hover snapshot each frame
-        hovered_marker_radius = None
-        hovered_marker_info: tuple[str, tuple[int, int], float] | None = None
+        hovered_marker: tuple[str, tuple[int, int], float] | None = None
+        hovered_distance = float("inf")
         pinned_label_entries: list[tuple[str, tuple[int, int], float]] = []
-        if not cinematic_mode and orbit_markers:
+        if orbit_markers:
             markers_snapshot = list(orbit_markers)
             latest_index: dict[str, int] = {}
             for idx, (marker_type, _, _, _) in enumerate(markers_snapshot):
                 latest_index[marker_type] = idx
             for idx, (marker_type, mx, my, mr) in enumerate(markers_snapshot):
                 marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
+                dist_to_mouse = math.hypot(
+                    marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1]
+                )
+                hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
                 is_latest = latest_index.get(marker_type) == idx
                 is_pinned = marker_type in pinned_markers and is_latest
-                is_hovered_marker = (
-                    hovered_marker is not None
-                    and marker_type == hovered_marker
-                    and is_latest
-                )
-                alpha = LABEL_MARKER_ALPHA
-                radius = 4
-                pin_color = LABEL_MARKER_COLOR
+                alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
+                radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
+                pin_color = LABEL_MARKER_PINNED_PIN_COLOR if is_pinned else LABEL_MARKER_COLOR
                 if is_pinned:
-                    alpha = LABEL_MARKER_PINNED_OUTLINE_ALPHA
+                    alpha = max(alpha, 240)
                     radius = max(radius, LABEL_MARKER_PINNED_RADIUS_PIXELS)
                     pygame.draw.circle(
                         label_layer,
@@ -2510,14 +2075,7 @@ def main():
                         radius + 4,
                         2,
                     )
-                    pin_color = LABEL_MARKER_PINNED_PIN_COLOR
                     pinned_label_entries.append((marker_type, marker_pos, mr))
-                if is_hovered_marker:
-                    alpha = LABEL_MARKER_HOVER_ALPHA
-                    radius = LABEL_MARKER_HOVER_RADIUS_PIXELS
-                    hovered_marker_info = (marker_type, marker_pos, mr)
-                    hovered_marker_pos = marker_pos
-                    hovered_marker_radius = mr
                 draw_marker_pin(
                     label_layer,
                     marker_pos,
@@ -2531,7 +2089,10 @@ def main():
                     marker_pos,
                     radius,
                 )
-                if is_hovered_marker:
+                if hovered:
+                    if dist_to_mouse < hovered_distance:
+                        hovered_distance = dist_to_mouse
+                        hovered_marker = (marker_type, marker_pos, mr)
                     pygame.draw.circle(
                         label_layer,
                         (*pin_color, int(alpha * 0.4)),
@@ -2544,9 +2105,9 @@ def main():
         visible_labels: list[tuple[str, tuple[int, int], float, bool]] = []
         for entry in pinned_label_entries:
             visible_labels.append((*entry, True))
-        if hovered_marker_info is not None:
-            if not any(entry[0] == hovered_marker_info[0] for entry in pinned_label_entries):
-                visible_labels.append((*hovered_marker_info, False))
+        if hovered_marker is not None:
+            if not any(entry[0] == hovered_marker[0] for entry in pinned_label_entries):
+                visible_labels.append((*hovered_marker, False))
 
         for marker_type, marker_pos, mr, is_pinned_label in visible_labels:
             render_marker_label(
@@ -2588,243 +2149,86 @@ def main():
                 pin_feedback_text = None
 
         # HUD
-        if not cinematic_mode:
-            vmag = float(np.linalg.norm(v))
-            eps = energy_specific(r, v)
-            e = eccentricity(r, v)
-            altitude_m = rmag - EARTH_RADIUS
-            scenario = get_current_scenario()
-            hud_entries: list[tuple[str, tuple[int, int, int]]] = [
-                (f"Scenario: {scenario.name}", HUD_TEXT_COLOR),
-                (f"t {t_sim:,.1f} s   ×{real_time_speed:,.2f}", HUD_TEXT_COLOR),
+        vmag = float(np.linalg.norm(v))
+        eps = energy_specific(r, v)
+        e = eccentricity(r, v)
+        altitude_km = (rmag - EARTH_RADIUS) / 1_000.0
+        scenario = get_current_scenario()
+        hud_entries: list[tuple[str, tuple[int, int, int]]] = [
+            (f"Scenario: {scenario.name}", HUD_TEXT_COLOR),
+            (f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}", HUD_TEXT_COLOR),
+        ]
+        altitude_color = HUD_TEXT_COLOR
+        altitude_line = f"alt {altitude_km:,.1f} km"
+        if depth_ratio > 0.0:
+            altitude_line = f"alt {altitude_km:,.1f} km   ATM"
+            altitude_color = ATM_WARNING_COLOR
+        hud_entries.append((altitude_line, altitude_color))
+        hud_entries.extend(
+            [
+                (f"|v| {vmag:,.1f} m/s   e {e:.3f}", HUD_TEXT_COLOR),
+                (f"ε {eps: .2e} J/kg", HUD_TEXT_COLOR),
             ]
-            altitude_color = HUD_TEXT_COLOR
-            altitude_line = f"alt {format_distance(altitude_m)}"
-            if depth_ratio > 0.0:
-                altitude_line = f"{altitude_line}   ATM"
-                altitude_color = ATM_WARNING_COLOR
-            hud_entries.append((altitude_line, altitude_color))
-            velocity_line = f"|v| {format_speed(vmag)}   e {e:.3f}"
-            energy_line = f"ε {eps: .2e} J/kg"
-            hud_entries.extend(
-                [
-                    (velocity_line, HUD_TEXT_COLOR),
-                    (energy_line, HUD_TEXT_COLOR),
-                ]
-            )
-            padding_x = 16
-            padding_y = 14
-            line_height = font.get_linesize()
-            hud_width = max(font.size(line)[0] for line, _ in hud_entries) + padding_x * 2
-            hud_height = line_height * len(hud_entries) + padding_y
-            hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
-            pygame.draw.rect(
-                hud_surface,
-                LABEL_BACKGROUND_COLOR,
-                hud_surface.get_rect(),
-                border_radius=14,
-            )
-            for index, (line, color) in enumerate(hud_entries):
-                text_surf = get_text_surface(font, line, color)
-                if CURRENT_HUD_ALPHA < 255:
-                    text_surf = text_surf.copy()
-                    text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
-                hud_surface.blit(
-                    text_surf,
-                    (padding_x, int(padding_y / 2) + index * line_height),
-                )
+        )
+        padding_x = 16
+        padding_y = 14
+        line_height = font.get_linesize()
+        hud_width = max(font.size(line)[0] for line, _ in hud_entries) + padding_x * 2
+        hud_height = line_height * len(hud_entries) + padding_y
+        hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
+        pygame.draw.rect(
+            hud_surface,
+            LABEL_BACKGROUND_COLOR,
+            hud_surface.get_rect(),
+            border_radius=14,
+        )
+        for index, (line, color) in enumerate(hud_entries):
+            text_surf = get_text_surface(font, line, color)
             if CURRENT_HUD_ALPHA < 255:
-                hud_surface.set_alpha(int(CURRENT_HUD_ALPHA))
-            hud_position = (20, 20)
-            screen.blit(hud_surface, hud_position)
-
-            badge_font = scenario_font
-            badge_y = hud_position[1] + hud_surface.get_height() + 8
-            badge_x = hud_position[0]
-            badges = [
-                "RK4",
-                f"dt={DT_PHYS:g}s",
-                f"atm: {'ON' if ATM_ALTITUDE > 0 else 'OFF'}",
-                f"drag: {'ON' if ATM_DRAG_COEFF > 0 else 'OFF'}",
-            ]
-            for text in badges:
-                text_surface = get_text_surface(badge_font, text, STATUS_BADGE_TEXT_COLOR)
-                badge_width = text_surface.get_width() + STATUS_BADGE_PADDING[0] * 2
-                badge_height = text_surface.get_height() + STATUS_BADGE_PADDING[1] * 2
-                badge_surface = pygame.Surface((badge_width, badge_height), pygame.SRCALPHA)
-                pygame.draw.rect(
-                    badge_surface,
-                    STATUS_BADGE_COLOR,
-                    badge_surface.get_rect(),
-                    border_radius=12,
-                )
-                pygame.draw.rect(
-                    badge_surface,
-                    STATUS_BADGE_BORDER,
-                    badge_surface.get_rect(),
-                    1,
-                    border_radius=12,
-                )
-                badge_surface.blit(
-                    text_surface,
-                    (STATUS_BADGE_PADDING[0], STATUS_BADGE_PADDING[1]),
-                )
-                if CURRENT_HUD_ALPHA < 255:
-                    badge_surface.set_alpha(int(CURRENT_HUD_ALPHA))
-                screen.blit(badge_surface, (badge_x, badge_y))
-                badge_x += badge_width + STATUS_BADGE_GAP
+                text_surf = text_surf.copy()
+                text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
+            hud_surface.blit(
+                text_surf,
+                (padding_x, int(padding_y / 2) + index * line_height),
+            )
+        if CURRENT_HUD_ALPHA < 255:
+            hud_surface.set_alpha(int(CURRENT_HUD_ALPHA))
+        screen.blit(hud_surface, (20, 20))
 
         for btn in sim_buttons:
             btn.draw(screen, font, mouse_pos)
 
-        if not cinematic_mode:
-            panel_lines = [scenario_panel_title, *scenario_help_lines]
-            if panel_lines:
-                panel_padding = 14
-                line_height = scenario_font.get_linesize()
-                panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
-                panel_height = line_height * len(panel_lines) + panel_padding * 2
-                panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-                pygame.draw.rect(
-                    panel_surface,
-                    LABEL_BACKGROUND_COLOR,
-                    panel_surface.get_rect(),
-                    border_radius=12,
-                )
-                y = panel_padding
-                for idx, line in enumerate(panel_lines):
-                    if idx == 0:
-                        color = HUD_TEXT_COLOR
-                    else:
-                        scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
-                        color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
-                    text_surf = get_text_surface(scenario_font, line, color)
-                    if CURRENT_HUD_ALPHA < 255:
-                        text_surf = text_surf.copy()
-                        text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
-                    panel_surface.blit(text_surf, (panel_padding, y))
-                    y += line_height
+        panel_lines = [scenario_panel_title, *scenario_help_lines]
+        if panel_lines:
+            panel_padding = 14
+            line_height = scenario_font.get_linesize()
+            panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
+            panel_height = line_height * len(panel_lines) + panel_padding * 2
+            panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+            pygame.draw.rect(
+                panel_surface,
+                LABEL_BACKGROUND_COLOR,
+                panel_surface.get_rect(),
+                border_radius=12,
+            )
+            y = panel_padding
+            for idx, line in enumerate(panel_lines):
+                if idx == 0:
+                    color = HUD_TEXT_COLOR
+                else:
+                    scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
+                    color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                text_surf = get_text_surface(scenario_font, line, color)
                 if CURRENT_HUD_ALPHA < 255:
-                    panel_surface.set_alpha(int(CURRENT_HUD_ALPHA))
-                panel_rect = panel_surface.get_rect()
-                panel_rect.topleft = (20, HEIGHT - panel_height - 20)
-                screen.blit(panel_surface, panel_rect)
-
-        if not cinematic_mode and status_log:
-            log_font = scenario_font
-            line_height = log_font.get_linesize()
-            base_y = 20
-            for index, (message, timestamp) in enumerate(status_log):
-                age = now_time - timestamp
-                fade = 1.0
-                if age > 4.0:
-                    fade = clamp(1.0 - (age - 4.0) / 2.0, 0.0, 1.0)
-                if fade <= 0.0:
-                    continue
-                text_surface = get_text_surface(log_font, message, HUD_TEXT_COLOR)
-                if CURRENT_HUD_ALPHA < 255 or fade < 1.0:
-                    text_surface = text_surface.copy()
-                    text_surface.set_alpha(int(CURRENT_HUD_ALPHA * fade))
-                text_rect = text_surface.get_rect()
-                text_rect.topright = (WIDTH - 20, base_y + index * (line_height + 4))
-                screen.blit(text_surface, text_rect)
-
-        if toasts and not cinematic_mode:
-            toast_font = scenario_font
-            toast_y = HEIGHT - 40
-            for message, start_time_toast, duration in reversed(toasts):
-                elapsed_toast = now_time - start_time_toast
-                if elapsed_toast > duration + TOAST_FADE_DURATION:
-                    continue
-                alpha_factor = 1.0
-                if elapsed_toast > duration:
-                    alpha_factor = clamp(
-                        1.0 - (elapsed_toast - duration) / max(TOAST_FADE_DURATION, 1e-6),
-                        0.0,
-                        1.0,
-                    )
-                text_surface = get_text_surface(toast_font, message, HUD_TEXT_COLOR)
-                bubble_width = text_surface.get_width() + TOOLTIP_PADDING[0] * 2
-                bubble_height = text_surface.get_height() + TOOLTIP_PADDING[1] * 2
-                bubble = pygame.Surface((bubble_width, bubble_height), pygame.SRCALPHA)
-                pygame.draw.rect(
-                    bubble,
-                    TOOLTIP_BG_COLOR,
-                    bubble.get_rect(),
-                    border_radius=12,
-                )
-                pygame.draw.rect(
-                    bubble,
-                    TOOLTIP_BORDER_COLOR,
-                    bubble.get_rect(),
-                    1,
-                    border_radius=12,
-                )
-                bubble.blit(
-                    text_surface,
-                    (TOOLTIP_PADDING[0], TOOLTIP_PADDING[1]),
-                )
-                if CURRENT_HUD_ALPHA < 255 or alpha_factor < 1.0:
-                    bubble = bubble.copy()
-                    bubble.set_alpha(int(CURRENT_HUD_ALPHA * alpha_factor))
-                bubble_rect = bubble.get_rect()
-                bubble_rect.midbottom = (WIDTH // 2, toast_y)
-                screen.blit(bubble, bubble_rect)
-                toast_y -= bubble_height + 8
-
-        if state == "running" and not cinematic_mode:
-            tooltip_font = scenario_font
-            world_x, world_y = cursor_world_position
-            altitude_value = math.hypot(world_x, world_y) - EARTH_RADIUS
-            tooltip_lines = [
-                f"x {format_distance(world_x)}",
-                f"y {format_distance(world_y)}",
-                f"alt {format_distance(altitude_value)}",
-                f"|v| {format_speed(vmag)}",
-            ]
-            tooltip_surface = pygame.Surface(
-                (
-                    max(tooltip_font.size(line)[0] for line in tooltip_lines)
-                    + TOOLTIP_PADDING[0] * 2,
-                    len(tooltip_lines) * tooltip_font.get_linesize()
-                    + TOOLTIP_PADDING[1] * 2,
-                ),
-                pygame.SRCALPHA,
-            )
-            pygame.draw.rect(
-                tooltip_surface,
-                TOOLTIP_BG_COLOR,
-                tooltip_surface.get_rect(),
-                border_radius=10,
-            )
-            pygame.draw.rect(
-                tooltip_surface,
-                TOOLTIP_BORDER_COLOR,
-                tooltip_surface.get_rect(),
-                1,
-                border_radius=10,
-            )
-            for idx, line in enumerate(tooltip_lines):
-                line_surf = get_text_surface(tooltip_font, line, TOOLTIP_TEXT_COLOR)
-                tooltip_surface.blit(
-                    line_surf,
-                    (
-                        TOOLTIP_PADDING[0],
-                        TOOLTIP_PADDING[1] + idx * tooltip_font.get_linesize(),
-                    ),
-                )
+                    text_surf = text_surf.copy()
+                    text_surf.set_alpha(int(CURRENT_HUD_ALPHA))
+                panel_surface.blit(text_surf, (panel_padding, y))
+                y += line_height
             if CURRENT_HUD_ALPHA < 255:
-                tooltip_surface.set_alpha(int(CURRENT_HUD_ALPHA))
-            tooltip_pos = (mouse_pos[0] + 18, mouse_pos[1] + 18)
-            tooltip_rect = tooltip_surface.get_rect(topleft=tooltip_pos)
-            if tooltip_rect.right > WIDTH - 10:
-                tooltip_rect.right = WIDTH - 10
-            if tooltip_rect.bottom > HEIGHT - 10:
-                tooltip_rect.bottom = HEIGHT - 10
-            screen.blit(tooltip_surface, tooltip_rect)
-
-        if not cinematic_mode:
-            draw_hotkey_overlay(screen, scenario_font, show_help)
+                panel_surface.set_alpha(int(CURRENT_HUD_ALPHA))
+            panel_rect = panel_surface.get_rect()
+            panel_rect.topleft = (20, HEIGHT - panel_height - 20)
+            screen.blit(panel_surface, panel_rect)
 
         overlay_alpha_factor = 0.0
         overlay_should_draw = False
@@ -2886,11 +2290,7 @@ def main():
             overlay_rect.center = (WIDTH // 2, HEIGHT // 2)
             screen.blit(overlay_surface, overlay_rect)
 
-        if (
-            not cinematic_mode
-            and scenario_flash_text
-            and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION
-        ):
+        if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
             flash_surf = get_text_surface(
                 scenario_font, scenario_flash_text, HUD_TEXT_COLOR
             )
@@ -2899,21 +2299,6 @@ def main():
                 flash_surf.set_alpha(int(CURRENT_HUD_ALPHA))
             flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
             screen.blit(flash_surf, flash_rect)
-
-        if cinematic_mode:
-            vignette_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-            max_dim = max(WIDTH, HEIGHT)
-            center = (WIDTH // 2, HEIGHT // 2)
-            for idx, alpha in enumerate((60, 90, 130)):
-                radius = int(max_dim * (0.55 + idx * 0.12))
-                pygame.draw.circle(
-                    vignette_surface,
-                    (0, 0, 0, alpha),
-                    center,
-                    radius,
-                    width=int(max(12, max_dim * 0.05)),
-                )
-            screen.blit(vignette_surface, (0, 0))
 
         fps_value = clock.get_fps()
         fps_text = get_text_surface(font_fps, f"FPS: {fps_value:.1f}", HUD_TEXT_COLOR)
