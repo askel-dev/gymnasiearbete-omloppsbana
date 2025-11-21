@@ -13,27 +13,6 @@ import numpy as np
 from collections import deque, OrderedDict
 from dataclasses import dataclass
 
-from orbit_sim.core.config import PHYSICS_CFG, RENDER_CFG
-from orbit_sim.core.logging_utils import RunLogger
-from orbit_sim.core.model import Body, Satellite, SimState
-from orbit_sim.core.physics import (
-    atmosphere_depth_ratio,
-    clamp,
-    compute_orbit_prediction,
-    eccentricity,
-    energy_specific,
-    in_atmosphere,
-    rk4_step,
-)
-from orbit_sim.core.timekeeping import FixedStepAccumulator, FrameTimer
-from orbit_sim.data.scenarios import (
-    DEFAULT_SCENARIO_KEY,
-    SCENARIO_DISPLAY_ORDER,
-    SCENARIO_FLASH_DURATION,
-    SCENARIOS,
-    Scenario,
-)
-
 
 _TEXT_SURFACE_CACHE_MAX_SIZE = 256
 _TEXT_SURFACE_CACHE: OrderedDict[
@@ -63,6 +42,9 @@ def get_text_surface(
     if len(_TEXT_SURFACE_CACHE) > _TEXT_SURFACE_CACHE_MAX_SIZE:
         _TEXT_SURFACE_CACHE.popitem(last=False)
     return rendered
+
+from logging_utils import RunLogger
+
 
 def draw_text_with_shadow(
     surface: pygame.Surface,
@@ -592,117 +574,169 @@ def load_font(preferred_names: list[str], size: int, *, bold: bool = False) -> p
 # =======================
 #   FYSIK & KONSTANTER
 # =======================
-G = PHYSICS_CFG.gravitational_constant
-M = PHYSICS_CFG.earth_mass
-MU = PHYSICS_CFG.mu
-EARTH_RADIUS = PHYSICS_CFG.earth_radius
+G = 6.674e-11                 # gravitationskonstant (SI)
+M = 5.972e24                  # Jordens massa (kg)
+MU = G * M
+EARTH_RADIUS = 6_371_000      # m
 # Startvillkor
-R0 = PHYSICS_CFG.start_position
-V0 = PHYSICS_CFG.start_velocity
+R0 = np.array([7_000_000.0, 0.0])  # m
+V0 = np.array([0.0, 7_600.0])      # m/s
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """Preset initial-conditions used by the Scenario Mode."""
+
+    key: str
+    name: str
+    velocity: tuple[float, float]
+    description: str
+
+    def velocity_vector(self) -> np.ndarray:
+        return np.array(self.velocity, dtype=float)
+
+
+SCENARIO_DEFINITIONS: tuple[Scenario, ...] = (
+    Scenario(
+        key="leo",
+        name="LEO",
+        velocity=(0.0, 7_600.0),
+        description="Classic circular low Earth orbit (~7.6 km/s prograde).",
+    ),
+    Scenario(
+        key="suborbital",
+        name="Suborbital",
+        velocity=(0.0, 6_000.0),
+        description="Too slow for orbit – dramatic re-entry arc (~6.0 km/s).",
+    ),
+    Scenario(
+        key="escape",
+        name="Escape",
+        velocity=(0.0, 11_500.0),
+        description="High-energy burn that easily exceeds escape velocity (~11.5 km/s).",
+    ),
+    Scenario(
+        key="parabolic",
+        name="Parabolic",
+        velocity=(0.0, 10_000.0),
+        description="Close to the escape threshold (~10.0 km/s).",
+    ),
+    Scenario(
+        key="retrograde",
+        name="Retrograde",
+        velocity=(0.0, -7_600.0),
+        description="Same magnitude as LEO but flipped for retrograde flight.",
+    ),
+)
+
+SCENARIOS: dict[str, Scenario] = {scenario.key: scenario for scenario in SCENARIO_DEFINITIONS}
+SCENARIO_DISPLAY_ORDER: list[str] = [scenario.key for scenario in SCENARIO_DEFINITIONS]
+DEFAULT_SCENARIO_KEY = SCENARIO_DISPLAY_ORDER[0]
+SCENARIO_FLASH_DURATION = 2.0
 
 # =======================
 #   SIMULATOR-SETTINGS
 # =======================
-DT_PHYS = PHYSICS_CFG.dt                 # fysikens tidssteg (sekunder)
-REAL_TIME_SPEED = PHYSICS_CFG.real_time_speed        # sim-sek per real-sek (startvärde)
-MAX_SUBSTEPS = PHYSICS_CFG.max_substeps             # skydd mot för många fysiksteg/frame
-LOG_EVERY_STEPS = PHYSICS_CFG.log_every_steps           # logga var 20:e fysiksteg
-ESCAPE_RADIUS_FACTOR = PHYSICS_CFG.escape_radius_factor
-ORBIT_PREDICTION_INTERVAL = PHYSICS_CFG.orbit_prediction_interval
-MAX_ORBIT_PREDICTION_SAMPLES = PHYSICS_CFG.max_orbit_prediction_samples
-MAX_RENDERED_ORBIT_POINTS = PHYSICS_CFG.max_rendered_orbit_points
+DT_PHYS = 0.25                 # fysikens tidssteg (sekunder)
+REAL_TIME_SPEED = 240.0        # sim-sek per real-sek (startvärde)
+MAX_SUBSTEPS = 20             # skydd mot för många fysiksteg/frame
+LOG_EVERY_STEPS = 20           # logga var 20:e fysiksteg
+ESCAPE_RADIUS_FACTOR = 20.0
+ORBIT_PREDICTION_INTERVAL = 1.0
+MAX_ORBIT_PREDICTION_SAMPLES = 2_000
+MAX_RENDERED_ORBIT_POINTS = 800
 
 # =======================
 #   RIT- & KONTROLL-SETTINGS
 # =======================
 # Dessa värden sätts om efter att displayen initierats, men behöver
 # startvärden för typkontroller och tooling.
-WIDTH, HEIGHT = RENDER_CFG.width, RENDER_CFG.height
-WINDOWED_DEFAULT_SIZE = RENDER_CFG.windowed_default_size
-BACKGROUND_COLOR = RENDER_CFG.background_color
-PLANET_COLOR = RENDER_CFG.planet_color
-SATELLITE_COLOR = RENDER_CFG.satellite_color
-SATELLITE_PIXEL_RADIUS = RENDER_CFG.satellite_pixel_radius
-HUD_TEXT_COLOR = RENDER_CFG.hud_text_color
-HUD_TEXT_ALPHA_BASE = RENDER_CFG.hud_text_alpha_base
+WIDTH, HEIGHT = 1000, 800
+WINDOWED_DEFAULT_SIZE = (WIDTH, HEIGHT)
+BACKGROUND_COLOR = (0, 34, 72)
+PLANET_COLOR = (255, 183, 77)
+SATELLITE_COLOR = (255, 255, 255)
+SATELLITE_PIXEL_RADIUS = 6
+HUD_TEXT_COLOR = (234, 241, 255)
+HUD_TEXT_ALPHA_BASE = 255
 CURRENT_HUD_ALPHA: float = float(HUD_TEXT_ALPHA_BASE)
-HUD_SHADOW_COLOR = RENDER_CFG.hud_shadow_color
-ORBIT_PRIMARY_COLOR = RENDER_CFG.orbit_primary_color
-ORBIT_SECONDARY_COLOR = RENDER_CFG.orbit_secondary_color
-ORBIT_LINE_WIDTH = RENDER_CFG.orbit_line_width
-VEL_ARROW_COLOR = RENDER_CFG.velocity_arrow_color
-VEL_ARROW_SCALE = RENDER_CFG.velocity_arrow_scale
-VEL_ARROW_MIN_PIXELS = RENDER_CFG.velocity_arrow_min_pixels
-VEL_ARROW_MAX_PIXELS = RENDER_CFG.velocity_arrow_max_pixels
-VEL_ARROW_HEAD_LENGTH = RENDER_CFG.velocity_arrow_head_length
-VEL_ARROW_HEAD_ANGLE_DEG = RENDER_CFG.velocity_arrow_head_angle_deg
-BUTTON_COLOR = RENDER_CFG.button_color
-BUTTON_HOVER_COLOR = RENDER_CFG.button_hover_color
-BUTTON_TEXT_COLOR = RENDER_CFG.button_text_color
-BUTTON_BORDER_COLOR = RENDER_CFG.button_border_color
-BUTTON_HOVER_BORDER_COLOR = RENDER_CFG.button_hover_border_color
-BUTTON_RADIUS = RENDER_CFG.button_radius
-MENU_TITLE_COLOR = RENDER_CFG.menu_title_color
-MENU_SUBTITLE_COLOR = RENDER_CFG.menu_subtitle_color
-MENU_BUTTON_COLOR = RENDER_CFG.menu_button_color
-MENU_BUTTON_HOVER_COLOR = RENDER_CFG.menu_button_hover_color
-MENU_BUTTON_BORDER_COLOR = RENDER_CFG.menu_button_border_color
-MENU_BUTTON_TEXT_COLOR = RENDER_CFG.menu_button_text_color
-MENU_BUTTON_RADIUS = RENDER_CFG.menu_button_radius
-LABEL_BACKGROUND_COLOR = RENDER_CFG.label_background_color
-LABEL_MARKER_COLOR = RENDER_CFG.label_marker_color
-LABEL_TEXT_COLOR = RENDER_CFG.label_text_color
-LABEL_MARKER_ALPHA = RENDER_CFG.label_marker_alpha
-LABEL_MARKER_HOVER_RADIUS = RENDER_CFG.label_marker_hover_radius
-LABEL_MARKER_HOVER_ALPHA = RENDER_CFG.label_marker_hover_alpha
-LABEL_MARKER_HOVER_RADIUS_PIXELS = RENDER_CFG.label_marker_hover_radius_pixels
-LABEL_MARKER_PIN_WIDTH = RENDER_CFG.label_marker_pin_width
-LABEL_MARKER_PIN_HEIGHT = RENDER_CFG.label_marker_pin_height
-LABEL_MARKER_PIN_OFFSET = RENDER_CFG.label_marker_pin_offset
-LABEL_MARKER_PINNED_PIN_COLOR = RENDER_CFG.label_marker_pinned_pin_color
-LABEL_MARKER_PINNED_GLOW_COLOR = RENDER_CFG.label_marker_pinned_glow_color
-LABEL_MARKER_PINNED_GLOW_ALPHA = RENDER_CFG.label_marker_pinned_glow_alpha
-LABEL_MARKER_PINNED_OUTLINE_ALPHA = RENDER_CFG.label_marker_pinned_outline_alpha
-LABEL_MARKER_PINNED_RADIUS_PIXELS = RENDER_CFG.label_marker_pinned_radius_pixels
-LABEL_MARKER_PINNED_GLOW_RADIUS = RENDER_CFG.label_marker_pinned_glow_radius
-LABEL_PINNED_BACKGROUND_COLOR = RENDER_CFG.label_pinned_background_color
-LABEL_PINNED_BADGE_COLOR = RENDER_CFG.label_pinned_badge_color
-LABEL_PINNED_BADGE_TEXT_COLOR = RENDER_CFG.label_pinned_badge_text_color
-MARKER_PIN_FEEDBACK_DURATION = RENDER_CFG.marker_pin_feedback_duration
-FPS_TEXT_ALPHA = RENDER_CFG.fps_text_alpha
-STARFIELD_PARALLAX = RENDER_CFG.starfield_parallax
+HUD_SHADOW_COLOR = (10, 15, 30, 120)
+ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
+ORBIT_SECONDARY_COLOR = (220, 236, 255, 140)
+ORBIT_LINE_WIDTH = 2
+VEL_ARROW_COLOR = (255, 220, 180)
+VEL_ARROW_SCALE = 0.004
+VEL_ARROW_MIN_PIXELS = 0
+VEL_ARROW_MAX_PIXELS = 90
+VEL_ARROW_HEAD_LENGTH = 10
+VEL_ARROW_HEAD_ANGLE_DEG = 26
+BUTTON_COLOR = (8, 32, 64, int(255 * 0.78))
+BUTTON_HOVER_COLOR = (18, 52, 94, int(255 * 0.88))
+BUTTON_TEXT_COLOR = (234, 241, 255)
+BUTTON_BORDER_COLOR = (88, 140, 255, int(255 * 0.55))
+BUTTON_HOVER_BORDER_COLOR = (118, 180, 255, int(255 * 0.8))
+BUTTON_RADIUS = 18
+MENU_TITLE_COLOR = (234, 241, 255)
+MENU_SUBTITLE_COLOR = (180, 198, 228)
+MENU_BUTTON_COLOR = (9, 44, 92, 220)
+MENU_BUTTON_HOVER_COLOR = (24, 74, 140, 235)
+MENU_BUTTON_BORDER_COLOR = (255, 255, 255, 50)
+MENU_BUTTON_TEXT_COLOR = (234, 241, 255)
+MENU_BUTTON_RADIUS = 20
+LABEL_BACKGROUND_COLOR = (12, 18, 30, int(255 * 0.18))
+LABEL_MARKER_COLOR = (46, 209, 195)
+LABEL_TEXT_COLOR = (234, 241, 255)
+LABEL_MARKER_ALPHA = int(255 * 0.9)
+LABEL_MARKER_HOVER_RADIUS = 22
+LABEL_MARKER_HOVER_ALPHA = 255
+LABEL_MARKER_HOVER_RADIUS_PIXELS = 6
+LABEL_MARKER_PIN_WIDTH = 10
+LABEL_MARKER_PIN_HEIGHT = 16
+LABEL_MARKER_PIN_OFFSET = 6
+LABEL_MARKER_PINNED_PIN_COLOR = (248, 252, 255)
+LABEL_MARKER_PINNED_GLOW_COLOR = (255, 255, 255)
+LABEL_MARKER_PINNED_GLOW_ALPHA = 90
+LABEL_MARKER_PINNED_OUTLINE_ALPHA = 210
+LABEL_MARKER_PINNED_RADIUS_PIXELS = 8
+LABEL_MARKER_PINNED_GLOW_RADIUS = 14
+LABEL_PINNED_BACKGROUND_COLOR = (16, 28, 46, int(255 * 0.42))
+LABEL_PINNED_BADGE_COLOR = (255, 255, 255, 220)
+LABEL_PINNED_BADGE_TEXT_COLOR = (18, 36, 64)
+MARKER_PIN_FEEDBACK_DURATION = 1.6
+FPS_TEXT_ALPHA = int(255 * 0.6)
+STARFIELD_PARALLAX = 0.12
 
-ATM_ALTITUDE = PHYSICS_CFG.atm_altitude  # m
-ATM_BOUNDARY_RADIUS = PHYSICS_CFG.atmosphere_boundary_radius
-ATM_DRAG_COEFF = PHYSICS_CFG.atm_drag_coeff
-ATM_WARNING_DURATION = PHYSICS_CFG.atm_warning_duration
-ATM_WARNING_COLOR = RENDER_CFG.atm_warning_color
-ATM_GLOW_COLOR = RENDER_CFG.atm_glow_color
-ATM_GLOW_OUTER_ALPHA = RENDER_CFG.atm_glow_outer_alpha
-ATM_GLOW_INNER_ALPHA = RENDER_CFG.atm_glow_inner_alpha
-ATM_GLOW_RADIUS_FACTOR = RENDER_CFG.atm_glow_radius_factor
+ATM_ALTITUDE = 120_000.0  # m
+ATM_BOUNDARY_RADIUS = EARTH_RADIUS + ATM_ALTITUDE
+ATM_DRAG_COEFF = 1.4e-5
+ATM_WARNING_DURATION = 2.0
+ATM_WARNING_COLOR = (255, 176, 120)
+ATM_GLOW_COLOR = (255, 120, 80)
+ATM_GLOW_OUTER_ALPHA = 90
+ATM_GLOW_INNER_ALPHA = 180
+ATM_GLOW_RADIUS_FACTOR = 2.6
 
-IMPACT_FREEZE_DELAY = RENDER_CFG.impact_freeze_delay
-IMPACT_HUD_ALPHA_FACTOR = RENDER_CFG.impact_hud_alpha_factor
-IMPACT_HUD_FADE_DURATION = RENDER_CFG.impact_hud_fade_duration
-IMPACT_OVERLAY_DELAY = RENDER_CFG.impact_overlay_delay
-IMPACT_OVERLAY_FADE_DURATION = RENDER_CFG.impact_overlay_fade_duration
-IMPACT_OVERLAY_COLOR = RENDER_CFG.impact_overlay_color
-IMPACT_TITLE_COLOR = RENDER_CFG.impact_title_color
-IMPACT_TEXT_COLOR = RENDER_CFG.impact_text_color
-SHOCK_RING_COLOR = RENDER_CFG.shock_ring_color
-SHOCK_RING_DURATION = RENDER_CFG.shock_ring_duration
-SHOCK_RING_EXPANSION_FACTOR = RENDER_CFG.shock_ring_expansion_factor
-SHOCK_RING_WIDTH = RENDER_CFG.shock_ring_width
+IMPACT_FREEZE_DELAY = 0.7
+IMPACT_HUD_ALPHA_FACTOR = 0.35
+IMPACT_HUD_FADE_DURATION = 0.6
+IMPACT_OVERLAY_DELAY = 2.0
+IMPACT_OVERLAY_FADE_DURATION = 1.0
+IMPACT_OVERLAY_COLOR = (12, 18, 30, int(255 * 0.75))
+IMPACT_TITLE_COLOR = (255, 214, 130)
+IMPACT_TEXT_COLOR = (234, 241, 255)
+SHOCK_RING_COLOR = (255, 66, 66)
+SHOCK_RING_DURATION = 2.5
+SHOCK_RING_EXPANSION_FACTOR = 6.0
+SHOCK_RING_WIDTH = 6
 
-GRID_SPACING_METERS = RENDER_CFG.grid_spacing_meters
-GRID_MIN_PIXEL_SPACING = RENDER_CFG.grid_min_pixel_spacing
-GRID_LINE_COLOR = RENDER_CFG.grid_line_color
-GRID_LINE_ALPHA = RENDER_CFG.grid_line_alpha
-GRID_LABEL_COLOR = RENDER_CFG.grid_label_color
-GRID_LABEL_ALPHA = RENDER_CFG.grid_label_alpha
-GRID_AXIS_LABEL_ALPHA = RENDER_CFG.grid_axis_label_alpha
-GRID_LABEL_MARGIN = RENDER_CFG.grid_label_margin
+GRID_SPACING_METERS = 1_000_000.0
+GRID_MIN_PIXEL_SPACING = 42.0
+GRID_LINE_COLOR = (200, 208, 220)
+GRID_LINE_ALPHA = 40
+GRID_LABEL_COLOR = (208, 216, 228)
+GRID_LABEL_ALPHA = 180
+GRID_AXIS_LABEL_ALPHA = 160
+GRID_LABEL_MARGIN = 10
 
 STARFIELD: list[dict[str, object]] = []
 MENU_PLANET_IMAGE_PATH = os.path.join(
@@ -733,14 +767,64 @@ def update_display_metrics(width: int, height: int) -> None:
 
 
 PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
-MIN_PPM = RENDER_CFG.min_pixels_per_meter
-MAX_PPM = RENDER_CFG.max_pixels_per_meter
+MIN_PPM = 1e-7
+MAX_PPM = 1e-2
+
+# =======================
+#   HJÄLPMETODER
+# =======================
+def in_atmosphere(r: np.ndarray) -> bool:
+    return np.linalg.norm(r) <= ATM_BOUNDARY_RADIUS
+
+
+def atmosphere_depth_ratio(r_magnitude: float) -> float:
+    if ATM_ALTITUDE <= 0.0:
+        return 0.0
+    return clamp((ATM_BOUNDARY_RADIUS - r_magnitude) / ATM_ALTITUDE, 0.0, 1.0)
+
+
+def accel(r: np.ndarray, v: np.ndarray) -> np.ndarray:
+    rmag = np.linalg.norm(r)
+    if rmag <= 0.0:
+        return np.zeros_like(r)
+    gravitational = -MU * r / (rmag**3)
+    if rmag <= ATM_BOUNDARY_RADIUS:
+        depth = atmosphere_depth_ratio(rmag)
+        drag_coeff = ATM_DRAG_COEFF * (0.2 + 0.8 * depth)
+        gravitational += -drag_coeff * v
+    return gravitational
+
+
+def rk4_step(r, v, dt):
+    a1 = accel(r, v);                    k1_r = v;              k1_v = a1
+    a2 = accel(r + 0.5 * dt * k1_r, v + 0.5 * dt * k1_v);  k2_r = v + 0.5 * dt * k1_v; k2_v = a2
+    a3 = accel(r + 0.5 * dt * k2_r, v + 0.5 * dt * k2_v);  k3_r = v + 0.5 * dt * k2_v; k3_v = a3
+    a4 = accel(r + dt * k3_r, v + dt * k3_v);              k4_r = v + dt * k3_v;     k4_v = a4
+    r_next = r + (dt / 6.0) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
+    v_next = v + (dt / 6.0) * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
+    return r_next, v_next
+
+def energy_specific(r, v):
+    rmag = np.linalg.norm(r)
+    vmag2 = v[0]*v[0] + v[1]*v[1]
+    return 0.5*vmag2 - MU/rmag
+
+def eccentricity(r, v):
+    r3 = np.array([r[0], r[1], 0.0])
+    v3 = np.array([v[0], v[1], 0.0])
+    h = np.cross(r3, v3)
+    e_vec = np.cross(v3, h)/MU - r3/np.linalg.norm(r3)
+    return np.linalg.norm(e_vec[:2])
 
 def world_to_screen(x, y, ppm, camera_center=(0.0, 0.0)):
     cx, cy = camera_center
     sx = WIDTH // 2 + int((x - cx) * ppm)
     sy = HEIGHT // 2 - int((y - cy) * ppm)
     return sx, sy
+
+def clamp(val, lo, hi):
+    return max(lo, min(hi, val))
+
 
 def compute_satellite_radius(_: float) -> int:
     return SATELLITE_PIXEL_RADIUS
@@ -771,6 +855,27 @@ def downsample_points(
     if sampled[-1] != points[-1]:
         sampled.append(points[-1])
     return sampled
+
+
+def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[float | None, list[tuple[float, float]]]:
+    eps = energy_specific(r_init, v_init)
+    if eps >= 0.0:
+        return None, []
+
+    a = -MU / (2.0 * eps)
+    period = 2.0 * math.pi * math.sqrt(a**3 / MU)
+    estimated_samples = max(360, int(period / ORBIT_PREDICTION_INTERVAL))
+    num_samples = max(2, min(MAX_ORBIT_PREDICTION_SAMPLES, estimated_samples))
+    dt = period / num_samples
+
+    r = r_init.copy()
+    v = v_init.copy()
+    points: list[tuple[float, float]] = []
+    for _ in range(num_samples + 1):
+        points.append((float(r[0]), float(r[1])))
+        r, v = rk4_step(r, v, dt)
+
+    return period, points
 
 
 @dataclass(frozen=True)
@@ -1140,16 +1245,10 @@ def main():
     menu_subtitle_text = "av Axel Jönsson"
 
     # Simuleringsstate
-    earth_body = Body(name="Earth", radius=EARTH_RADIUS, mu=MU)
-    sim_state = SimState(
-        body=earth_body,
-        satellite=Satellite(
-            position=R0.copy(),
-            velocity=scenario_velocity_vector(),
-        ),
-        time=0.0,
-        paused=False,
-    )
+    r = R0.copy()
+    v = scenario_velocity_vector()
+    t_sim = 0.0
+    paused = False
     ppm = PIXELS_PER_METER
     ppm_target = ppm
     real_time_speed = REAL_TIME_SPEED
@@ -1217,8 +1316,8 @@ def main():
     atmosphere_logged = False
 
     # tidsackumulator för fast fysik
-    stepper = FixedStepAccumulator(step=DT_PHYS, max_substeps=MAX_SUBSTEPS)
-    frame_timer = FrameTimer()
+    accumulator = 0.0
+    last_time = time.perf_counter()
 
     # loggningsstate
     logger: RunLogger | None = None
@@ -1235,8 +1334,8 @@ def main():
             logger = None
 
     def reset():
-        nonlocal sim_state, ppm, real_time_speed
-        nonlocal stepper, frame_timer, log_step_counter, prev_r, prev_dr
+        nonlocal r, v, t_sim, paused, ppm, real_time_speed
+        nonlocal accumulator, last_time, log_step_counter, prev_r, prev_dr
         nonlocal impact_logged, escape_logged, ppm_target
         nonlocal camera_center, orbit_markers, camera_target
         nonlocal camera_mode, is_dragging_camera
@@ -1249,12 +1348,15 @@ def main():
         nonlocal atmosphere_logged, show_velocity_arrow
         global CURRENT_HUD_ALPHA
         close_logger()
-        sim_state.reset(R0, scenario_velocity_vector())
+        r = R0.copy()
+        v = scenario_velocity_vector()
+        t_sim = 0.0
+        paused = False
         ppm_target = clamp(ppm_target, MIN_PPM, MAX_PPM)
         ppm = clamp(ppm_target, MIN_PPM, MAX_PPM)
         real_time_speed = clamp(real_time_speed, 0.1, 10_000.0)
-        stepper.clear()
-        frame_timer = FrameTimer()
+        accumulator = 0.0
+        last_time = time.perf_counter()
         log_step_counter = 0
         prev_r = None
         prev_dr = None
@@ -1266,10 +1368,7 @@ def main():
         pin_feedback_time = 0.0
         camera_target[:] = camera_center
         is_dragging_camera = False
-        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(
-            sim_state.satellite.position,
-            sim_state.satellite.velocity,
-        )
+        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
         impact_info = None
         shock_ring_start = None
         impact_freeze_time = None
@@ -1342,21 +1441,19 @@ def main():
     def log_state(dt_eff: float) -> None:
         if logger is None:
             return
-        r_vec = sim_state.satellite.position
-        v_vec = sim_state.satellite.velocity
-        rmag = float(np.linalg.norm(r_vec))
-        vmag = float(np.linalg.norm(v_vec))
-        eps = float(energy_specific(r_vec, v_vec))
-        h_vec = np.cross(np.array([r_vec[0], r_vec[1], 0.0]), np.array([v_vec[0], v_vec[1], 0.0]))
+        rmag = float(np.linalg.norm(r))
+        vmag = float(np.linalg.norm(v))
+        eps = float(energy_specific(r, v))
+        h_vec = np.cross(np.array([r[0], r[1], 0.0]), np.array([v[0], v[1], 0.0]))
         h_mag = float(np.linalg.norm(h_vec))
-        e_val = float(eccentricity(r_vec, v_vec))
+        e_val = float(eccentricity(r, v))
         logger.log_ts(
             [
-                float(sim_state.time),
-                float(r_vec[0]),
-                float(r_vec[1]),
-                float(v_vec[0]),
-                float(v_vec[1]),
+                float(t_sim),
+                float(r[0]),
+                float(r[1]),
+                float(v[0]),
+                float(v[1]),
                 rmag,
                 vmag,
                 eps,
@@ -1390,7 +1487,7 @@ def main():
         }
         logger.write_meta(meta)
         log_step_counter = 0
-        prev_r = float(np.linalg.norm(sim_state.satellite.position))
+        prev_r = float(np.linalg.norm(r))
         prev_dr = None
         impact_logged = False
         escape_logged = False
@@ -1445,7 +1542,8 @@ def main():
     button_gap = 10
 
     def toggle_pause():
-        sim_state.paused = not sim_state.paused
+        nonlocal paused
+        paused = not paused
 
     def slow_down():
         nonlocal real_time_speed
@@ -1465,7 +1563,7 @@ def main():
             camera_mode = "earth"
 
     def load_next_scenario() -> None:
-        nonlocal current_scenario_key, state
+        nonlocal current_scenario_key, state, paused
         if not SCENARIO_DISPLAY_ORDER:
             return
         try:
@@ -1477,16 +1575,16 @@ def main():
         set_scenario(SCENARIO_DISPLAY_ORDER[next_index])
         if previous_state == "impact":
             state = "running"
-            sim_state.paused = False
+            paused = False
             init_run_logging()
         elif previous_state != "menu":
             state = "running"
 
     def reset_and_continue():
-        nonlocal state, impact_info, shock_ring_start
+        nonlocal state, paused, impact_info, shock_ring_start
         reset()
         state = "running"
-        sim_state.paused = False
+        paused = False
         impact_info = None
         shock_ring_start = None
         init_run_logging()
@@ -1507,7 +1605,7 @@ def main():
             btn.rect.update(x_pos, top, button_width, button_height)
 
     sim_buttons = [
-        Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if sim_state.paused else "Pause"),
+        Button((20, 20, button_width, button_height), "Pause", toggle_pause, lambda: "Resume" if paused else "Pause"),
         Button((20, 20 + (button_height + button_gap), button_width, button_height), "Reset", reset_and_continue),
         Button(
             (20, 20 + 2 * (button_height + button_gap), button_width, button_height),
@@ -1586,7 +1684,7 @@ def main():
                     set_scenario(scenario_shortcut_map[event.key])
                     if state == "impact":
                         state = "running"
-                        sim_state.paused = False
+                        paused = False
                         init_run_logging()
                     continue
                 if event.key == pygame.K_g:
@@ -1600,7 +1698,7 @@ def main():
                     continue
                 if state == "running":
                     if event.key == pygame.K_SPACE:
-                        sim_state.paused = not sim_state.paused
+                        paused = not paused
                     elif event.key == pygame.K_r:
                         reset_and_continue()
                     elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
@@ -1752,31 +1850,28 @@ def main():
             continue
 
         # --- Fysik ackumulator ---
-        frame_dt_real = frame_timer.tick()
+        now = time.perf_counter()
+        frame_dt_real = now - last_time
+        last_time = now
         sim_dt_target = frame_dt_real * real_time_speed
+        accumulator += sim_dt_target
 
-        if sim_state.paused:
-            stepper.clear()
-            steps_to_run, dt_step = 0, 0.0
-        else:
-            stepper.accrue(sim_dt_target)
-            steps_to_run, dt_step = stepper.consume()
+        if paused:
+            accumulator = 0.0
 
-        if steps_to_run > 0 and dt_step > 0.0:
+        time_to_simulate = accumulator if not paused else 0.0
+        if time_to_simulate > 0.0:
+            steps_needed = max(1, math.ceil(time_to_simulate / DT_PHYS))
+            steps_to_run = min(steps_needed, MAX_SUBSTEPS)
+            dt_step = time_to_simulate / steps_to_run
 
             for _ in range(steps_to_run):
-                position, velocity = rk4_step(
-                    sim_state.satellite.position,
-                    sim_state.satellite.velocity,
-                    dt_step,
-                )
-                sim_state.satellite.position = position
-                sim_state.satellite.velocity = velocity
-                sim_state.time += dt_step
-                rmag = float(np.linalg.norm(position))
-                current_in_atmosphere = in_atmosphere(position)
+                r, v = rk4_step(r, v, dt_step)
+                t_sim += dt_step
+                rmag = float(np.linalg.norm(r))
+                current_in_atmosphere = in_atmosphere(r)
                 if current_in_atmosphere and atmosphere_entry_time_sim is None:
-                    atmosphere_entry_time_sim = float(sim_state.time)
+                    atmosphere_entry_time_sim = float(t_sim)
                     atmosphere_entry_time_real = time.perf_counter()
                     atmosphere_warning_end_time = atmosphere_entry_time_real + ATM_WARNING_DURATION
                 event_logged = False
@@ -1794,14 +1889,12 @@ def main():
                 prev_r = rmag
 
                 if event_type is not None:
-                    orbit_markers.append(
-                        (event_type, float(position[0]), float(position[1]), rmag)
-                    )
+                    orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
                     refresh_pinned_marker(event_type)
 
-                vmag = float(np.linalg.norm(velocity))
-                eps = float(energy_specific(position, velocity))
-                e_val = float(eccentricity(position, velocity))
+                vmag = float(np.linalg.norm(v))
+                eps = float(energy_specific(r, v))
+                e_val = float(eccentricity(r, v))
                 impact_triggered = not impact_logged and rmag <= EARTH_RADIUS
 
                 if logger is not None:
@@ -1810,7 +1903,7 @@ def main():
                     if event_type is not None:
                         logger.log_event(
                             [
-                                float(sim_state.time),
+                                float(t_sim),
                                 event_type,
                                 rmag,
                                 vmag,
@@ -1822,7 +1915,7 @@ def main():
                     if impact_triggered:
                         logger.log_event(
                             [
-                                float(sim_state.time),
+                                float(t_sim),
                                 "impact",
                                 rmag,
                                 vmag,
@@ -1838,7 +1931,7 @@ def main():
                     ):
                         logger.log_event(
                             [
-                                float(sim_state.time),
+                                float(t_sim),
                                 "atmosphere_entry",
                                 rmag,
                                 vmag,
@@ -1851,7 +1944,7 @@ def main():
                     if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
                         logger.log_event(
                             [
-                                float(sim_state.time),
+                                float(t_sim),
                                 "escape",
                                 rmag,
                                 vmag,
@@ -1868,18 +1961,18 @@ def main():
                 if impact_triggered:
                     impact_logged = True
                     if impact_info is None:
-                        normal = position / max(rmag, 1e-9)
+                        normal = r / max(rmag, 1e-9)
                         tangent = np.array([-normal[1], normal[0]])
-                        tangential_speed = float(np.dot(velocity, tangent))
-                        radial_speed = float(np.dot(velocity, normal))
+                        tangential_speed = float(np.dot(v, tangent))
+                        radial_speed = float(np.dot(v, normal))
                         angle_rad = math.atan2(abs(radial_speed), abs(tangential_speed))
                         impact_info = {
-                            "time": float(sim_state.time),
+                            "time": float(t_sim),
                             "speed": vmag,
                             "angle": math.degrees(angle_rad),
                             "radial_speed": radial_speed,
                             "tangential_speed": tangential_speed,
-                            "position": (float(position[0]), float(position[1])),
+                            "position": (float(r[0]), float(r[1])),
                         }
                         shock_ring_start = time.perf_counter()
                         impact_freeze_time = shock_ring_start + IMPACT_FREEZE_DELAY
@@ -1888,12 +1981,12 @@ def main():
                             overlay_ready_time = max(overlay_ready_time, atmosphere_warning_end_time)
                         impact_overlay_reveal_time = overlay_ready_time
                         impact_overlay_visible_since = None
-                        sim_state.paused = True
+                        paused = True
                         state = "impact"
-                        stepper.clear()
+                        accumulator = 0.0
                         break
 
-            stepper.clear()
+            accumulator = 0.0
 
         now_time = time.perf_counter()
         # --- Render ---
@@ -1916,10 +2009,6 @@ def main():
         CURRENT_HUD_ALPHA += (target_hud_alpha - CURRENT_HUD_ALPHA) * 0.2
         CURRENT_HUD_ALPHA = clamp(CURRENT_HUD_ALPHA, 0.0, HUD_TEXT_ALPHA_BASE)
 
-        r_vec = sim_state.satellite.position
-        v_vec = sim_state.satellite.velocity
-        rmag = float(np.linalg.norm(r_vec))
-
         # Smooth zoom mot mål
         ppm += (ppm_target - ppm) * 0.1
         ppm = clamp(ppm, MIN_PPM, MAX_PPM)
@@ -1929,7 +2018,7 @@ def main():
             view_offset = (HEIGHT * 0.08) / max(ppm, 1e-6)
             camera_target[:] = (0.0, view_offset)
         elif camera_mode == "satellite":
-            camera_target[:] = (r_vec[0], r_vec[1])
+            camera_target[:] = (r[0], r[1])
         else:
             camera_target[:] = camera_center
         camera_center += (camera_target - camera_center) * 0.1
@@ -1949,6 +2038,7 @@ def main():
             )
             screen.blit(grid_surface, (0, 0))
         mouse_pos = pygame.mouse.get_pos()
+        rmag = float(np.linalg.norm(r))
         depth_ratio = atmosphere_depth_ratio(rmag)
         earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
@@ -1956,7 +2046,7 @@ def main():
             if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
                 reveal_fraction = 1.0
             else:
-                reveal_fraction = clamp(sim_state.time / orbit_prediction_period, 0.0, 1.0)
+                reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
             total_points = len(orbit_prediction_points)
             if reveal_fraction >= 1.0:
                 subset = orbit_prediction_points
@@ -1996,8 +2086,8 @@ def main():
                     )
                 else:
                     ring_center = world_to_screen(
-                        r_vec[0],
-                        r_vec[1],
+                        r[0],
+                        r[1],
                         ppm,
                         camera_center_tuple,
                     )
@@ -2022,7 +2112,7 @@ def main():
                     )
                     screen.blit(ring_surface, (0, 0))
 
-        sat_pos = world_to_screen(r_vec[0], r_vec[1], ppm, camera_center_tuple)
+        sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
         sat_radius_px = compute_satellite_radius(rmag)
         heating_intensity = depth_ratio if rmag >= EARTH_RADIUS else 1.0
         if heating_intensity > 0.0:
@@ -2030,7 +2120,7 @@ def main():
         draw_satellite(screen, sat_pos, sat_radius_px)
 
         if show_velocity_arrow:
-            vx, vy = float(v_vec[0]), float(v_vec[1])
+            vx, vy = float(v[0]), float(v[1])
             vmag = math.hypot(vx, vy)
             if vmag > 1e-6:
                 arrow_length = clamp(
@@ -2191,14 +2281,14 @@ def main():
                 pin_feedback_text = None
 
         # HUD
-        vmag = float(np.linalg.norm(v_vec))
-        eps = energy_specific(r_vec, v_vec)
-        e = eccentricity(r_vec, v_vec)
+        vmag = float(np.linalg.norm(v))
+        eps = energy_specific(r, v)
+        e = eccentricity(r, v)
         altitude_km = (rmag - EARTH_RADIUS) / 1_000.0
         scenario = get_current_scenario()
         hud_entries: list[tuple[str, tuple[int, int, int]]] = [
             (f"Scenario: {scenario.name}", HUD_TEXT_COLOR),
-            (f"t {sim_state.time:,.0f} s   ×{real_time_speed:.1f}", HUD_TEXT_COLOR),
+            (f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}", HUD_TEXT_COLOR),
         ]
         altitude_color = HUD_TEXT_COLOR
         altitude_line = f"alt {altitude_km:,.1f} km"
