@@ -1,0 +1,22 @@
+{
+  "G": 6.674e-11,
+  "M": 5.972e+24,
+  "R0": [
+    7000000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    10000.0
+  ],
+  "code_version": "v1.0",
+  "dt_phys": 0.25,
+  "integrator": "RK4",
+  "log_strategy": "every_20_steps",
+  "mu": 398571280000000.0,
+  "scenario_description": "Close to the escape threshold (~10.0 km/s).",
+  "scenario_key": "parabolic",
+  "scenario_name": "Parabolic",
+  "start_speed": 240.0,
+  "v0": 10000.0
+}

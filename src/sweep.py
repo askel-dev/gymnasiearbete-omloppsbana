@@ -9,13 +9,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
+from physics import G, M, MU, EARTH_RADIUS, get_acceleration, rk4_step
+
 # ===========================
 # PHYSICS CONSTANTS
 # ===========================
-G = 6.674e-11
-M = 5.972e24
-MU = G * M
-EARTH_RADIUS = 6_371_000
 R0 = np.array([7_000_000.0, 0.0])  # 7000 km orbit start distance
 
 # ===========================
@@ -38,19 +36,6 @@ FIGURES_DIR = Path("figures")
 # ===========================
 # PHYSICS HELPERS
 # ===========================
-def accel(r: np.ndarray) -> np.ndarray:
-    rmag = math.hypot(r[0], r[1])
-    return -MU * r / (rmag ** 3)
-
-def rk4_step(r: np.ndarray, v: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray]:
-    a1 = accel(r); k1_r = v; k1_v = a1
-    a2 = accel(r + 0.5 * dt * k1_r); k2_r = v + 0.5 * dt * k1_v; k2_v = a2
-    a3 = accel(r + 0.5 * dt * k2_r); k3_r = v + 0.5 * dt * k2_v; k3_v = a3
-    a4 = accel(r + dt * k3_r);      k4_r = v + dt * k3_v;      k4_v = a4
-    r_next = r + (dt / 6.0) * (k1_r + 2*k2_r + 2*k3_r + k4_r)
-    v_next = v + (dt / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
-    return r_next, v_next
-
 def energy_specific(r: np.ndarray, v: np.ndarray) -> float:
     rmag = math.hypot(r[0], r[1])
     vmag2 = v[0]**2 + v[1]**2
