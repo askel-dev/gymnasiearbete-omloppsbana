@@ -14,17 +14,23 @@ from pygame.locals import DOUBLEBUF, FULLSCREEN, NOFRAME, RESIZABLE
 from collections import deque
 from dataclasses import dataclass
 
-from physics import G, M, EARTH_RADIUS, rk4_step
+from physics import G, rk4_step
 from logging_utils import RunLogger
+
+from planet_generator import get_preset, get_planet_sprite, Planet
+
+# =======================
+#   CURRENT PLANET
+# =======================
+# The central body for the simulation - can be changed via presets or custom generation
+PLANET_PRESETS = ["earth", "mars", "moon", "jupiter", "neptune", "venus", "saturn", "uranus", "io", "mercury"]
+current_planet: Planet = get_preset("earth")
+current_planet_index = 0
 
 # =======================
 #   PHYSICS CONSTANTS
 # =======================
-MU = G * M
-
-# Initial conditions
-R0 = np.array([7_000_000.0, 0.0])  # m
-V0 = np.array([0.0, 7_600.0])      # m/s
+# MU is now accessed via current_planet.mu
 
 # =======================
 #   SCENARIOS
@@ -34,50 +40,164 @@ class Scenario:
     """Preset initial conditions for different orbit types."""
     key: str
     name: str
-    velocity: tuple[float, float]
+    r0: float              # Starting distance from planet center (meters)
+    velocity: float        # Starting velocity magnitude (m/s), positive = prograde
     description: str
 
+    def position_vector(self) -> np.ndarray:
+        """Returns starting position vector (on +X axis)."""
+        return np.array([self.r0, 0.0], dtype=float)
+
     def velocity_vector(self) -> np.ndarray:
-        return np.array(self.velocity, dtype=float)
+        """Returns starting velocity vector (along +Y axis for prograde)."""
+        return np.array([0.0, self.velocity], dtype=float)
 
 
-SCENARIO_DEFINITIONS: tuple[Scenario, ...] = (
-    Scenario(
-        key="leo",
-        name="LEO",
-        velocity=(0.0, 7_600.0),
-        description="Classic circular low Earth orbit (~7.6 km/s prograde).",
-    ),
-    Scenario(
-        key="suborbital",
-        name="Suborbital",
-        velocity=(0.0, 6_000.0),
-        description="Too slow for orbit – dramatic re-entry arc (~6.0 km/s).",
-    ),
-    Scenario(
-        key="escape",
-        name="Escape",
-        velocity=(0.0, 11_500.0),
-        description="High-energy burn that easily exceeds escape velocity (~11.5 km/s).",
-    ),
-    Scenario(
-        key="parabolic",
-        name="Parabolic",
-        velocity=(0.0, 10_000.0),
-        description="Close to the escape threshold (~10.0 km/s).",
-    ),
-    Scenario(
-        key="retrograde",
-        name="Retrograde",
-        velocity=(0.0, -7_600.0),
-        description="Same magnitude as LEO but flipped for retrograde flight.",
-    ),
-)
+def generate_default_scenarios(planet: Planet) -> tuple[Scenario, ...]:
+    """
+    Generate default scenarios for a planet without custom definitions.
+    
+    Uses orbital mechanics formulas to calculate appropriate velocities:
+    - Circular orbit: v = sqrt(mu / r)
+    - Escape velocity: v = sqrt(2 * mu / r)
+    """
+    # Start 10% above the planet's surface
+    r0 = planet.radius * 1.1
+    
+    v_circular = math.sqrt(planet.mu / r0)
+    v_escape = math.sqrt(2 * planet.mu / r0)
+    
+    return (
+        Scenario(
+            key="orbit",
+            name="Circular Orbit",
+            r0=r0,
+            velocity=v_circular,
+            description=f"Stable circular orbit (~{v_circular/1000:.1f} km/s prograde).",
+        ),
+        Scenario(
+            key="suborbital",
+            name="Suborbital",
+            r0=r0,
+            velocity=v_circular * 0.79,
+            description=f"Too slow for orbit (~{v_circular*0.79/1000:.1f} km/s).",
+        ),
+        Scenario(
+            key="escape",
+            name="Escape",
+            r0=r0,
+            velocity=v_escape * 1.1,
+            description=f"Exceeds escape velocity (~{v_escape*1.1/1000:.1f} km/s).",
+        ),
+        Scenario(
+            key="parabolic",
+            name="Parabolic",
+            r0=r0,
+            velocity=v_escape,
+            description=f"Near escape threshold (~{v_escape/1000:.1f} km/s).",
+        ),
+        Scenario(
+            key="retrograde",
+            name="Retrograde",
+            r0=r0,
+            velocity=-v_circular,
+            description=f"Circular orbit velocity but retrograde (~{v_circular/1000:.1f} km/s).",
+        ),
+    )
 
-SCENARIOS: dict[str, Scenario] = {scenario.key: scenario for scenario in SCENARIO_DEFINITIONS}
-SCENARIO_DISPLAY_ORDER: list[str] = [scenario.key for scenario in SCENARIO_DEFINITIONS]
-DEFAULT_SCENARIO_KEY = SCENARIO_DISPLAY_ORDER[0]
+
+# Planet-specific scenario definitions with hand-tuned values
+# Values calculated using: v_circular = sqrt(mu/r), v_escape = sqrt(2*mu/r)
+PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
+    "Earth": (
+        Scenario("leo", "LEO", r0=7_000_000, velocity=7_546, description="Low Earth orbit (~7.5 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=7_000_000, velocity=6_000, description="Too slow for orbit (~6.0 km/s)."),
+        Scenario("escape", "Escape", r0=7_000_000, velocity=11_500, description="Exceeds escape velocity (~11.5 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=7_000_000, velocity=10_670, description="Near escape threshold (~10.7 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=7_000_000, velocity=-7_546, description="LEO velocity but retrograde."),
+    ),
+    "Mars": (
+        Scenario("lmo", "Low Mars Orbit", r0=3_800_000, velocity=3_360, description="Low Mars orbit (~3.4 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=3_800_000, velocity=2_700, description="Too slow for orbit (~2.7 km/s)."),
+        Scenario("escape", "Escape", r0=3_800_000, velocity=5_200, description="Exceeds escape velocity (~5.2 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=3_800_000, velocity=4_750, description="Near escape threshold (~4.8 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=3_800_000, velocity=-3_360, description="LMO velocity but retrograde."),
+    ),
+    "Moon": (
+        Scenario("llo", "Low Lunar Orbit", r0=1_937_000, velocity=1_633, description="Low lunar orbit (~1.6 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=1_937_000, velocity=1_300, description="Too slow for orbit (~1.3 km/s)."),
+        Scenario("escape", "Escape", r0=1_937_000, velocity=2_600, description="Exceeds escape velocity (~2.6 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=1_937_000, velocity=2_310, description="Near escape threshold (~2.3 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=1_937_000, velocity=-1_633, description="LLO velocity but retrograde."),
+    ),
+    "Jupiter": (
+        Scenario("ljo", "Low Jupiter Orbit", r0=75_000_000, velocity=41_070, description="Low Jupiter orbit (~41 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=75_000_000, velocity=32_000, description="Too slow for orbit (~32 km/s)."),
+        Scenario("escape", "Escape", r0=75_000_000, velocity=64_000, description="Exceeds escape velocity (~64 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=75_000_000, velocity=58_080, description="Near escape threshold (~58 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=75_000_000, velocity=-41_070, description="LJO velocity but retrograde."),
+    ),
+    "Neptune": (
+        Scenario("lno", "Low Neptune Orbit", r0=27_000_000, velocity=19_900, description="Low Neptune orbit (~20 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=27_000_000, velocity=15_500, description="Too slow for orbit (~15.5 km/s)."),
+        Scenario("escape", "Escape", r0=27_000_000, velocity=31_000, description="Exceeds escape velocity (~31 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=27_000_000, velocity=28_140, description="Near escape threshold (~28 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=27_000_000, velocity=-19_900, description="LNO velocity but retrograde."),
+    ),
+    "Venus": (
+        Scenario("lvo", "Low Venus Orbit", r0=6_700_000, velocity=7_160, description="Low Venus orbit (~7.2 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=6_700_000, velocity=5_700, description="Too slow for orbit (~5.7 km/s)."),
+        Scenario("escape", "Escape", r0=6_700_000, velocity=11_100, description="Exceeds escape velocity (~11.1 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=6_700_000, velocity=10_120, description="Near escape threshold (~10.1 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=6_700_000, velocity=-7_160, description="LVO velocity but retrograde."),
+    ),
+    "Saturn": (
+        Scenario("lso", "Low Saturn Orbit", r0=64_000_000, velocity=24_300, description="Low Saturn orbit (~24 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=64_000_000, velocity=19_000, description="Too slow for orbit (~19 km/s)."),
+        Scenario("escape", "Escape", r0=64_000_000, velocity=38_000, description="Exceeds escape velocity (~38 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=64_000_000, velocity=34_360, description="Near escape threshold (~34 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=64_000_000, velocity=-24_300, description="LSO velocity but retrograde."),
+    ),
+    "Uranus": (
+        Scenario("luo", "Low Uranus Orbit", r0=28_000_000, velocity=14_600, description="Low Uranus orbit (~14.6 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=28_000_000, velocity=11_500, description="Too slow for orbit (~11.5 km/s)."),
+        Scenario("escape", "Escape", r0=28_000_000, velocity=23_000, description="Exceeds escape velocity (~23 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=28_000_000, velocity=20_650, description="Near escape threshold (~21 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=28_000_000, velocity=-14_600, description="LUO velocity but retrograde."),
+    ),
+    "Mercury": (
+        Scenario("lmo", "Low Mercury Orbit", r0=2_700_000, velocity=2_860, description="Low Mercury orbit (~2.9 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=2_700_000, velocity=2_250, description="Too slow for orbit (~2.3 km/s)."),
+        Scenario("escape", "Escape", r0=2_700_000, velocity=4_450, description="Exceeds escape velocity (~4.5 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=2_700_000, velocity=4_040, description="Near escape threshold (~4.0 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=2_700_000, velocity=-2_860, description="LMO velocity but retrograde."),
+    ),
+    "Io": (
+        Scenario("lio", "Low Io Orbit", r0=2_000_000, velocity=1_728, description="Low Io orbit (~1.7 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=2_000_000, velocity=1_360, description="Too slow for orbit (~1.4 km/s)."),
+        Scenario("escape", "Escape", r0=2_000_000, velocity=2_700, description="Exceeds escape velocity (~2.7 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=2_000_000, velocity=2_440, description="Near escape threshold (~2.4 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=2_000_000, velocity=-1_728, description="LIO velocity but retrograde."),
+    ),
+}
+
+
+def get_scenarios_for_planet(planet: Planet) -> tuple[Scenario, ...]:
+    """Get the scenarios for a specific planet, generating defaults if needed."""
+    if planet.name in PLANET_SCENARIOS:
+        return PLANET_SCENARIOS[planet.name]
+    return generate_default_scenarios(planet)
+
+
 SCENARIO_FLASH_DURATION = 2.0
+
+
+def get_default_r0() -> float:
+    """Get default starting distance for current planet (used for scaling)."""
+    scenarios = get_scenarios_for_planet(current_planet)
+    if scenarios:
+        return scenarios[0].r0
+    return current_planet.radius * 1.1
 
 # =======================
 #   SIMULATOR SETTINGS
@@ -100,7 +220,6 @@ FULLSCREEN_ENABLED = False      # Start in fullscreen by default
 
 # Colors
 BACKGROUND_COLOR = (0, 34, 72)
-PLANET_COLOR = (255, 183, 77)
 SATELLITE_COLOR = (255, 255, 255)
 SATELLITE_PIXEL_RADIUS = 6
 HUD_TEXT_COLOR = (234, 241, 255)
@@ -153,91 +272,6 @@ GRID_AXIS_LABEL_ALPHA = 160
 GRID_LABEL_MARGIN = 10
 
 # =======================
-#   EARTH SPRITE
-# =======================
-_EARTH_SPRITE_CACHE: dict[int, pygame.Surface] = {}
-# Generate a random seed once per session so Earth is consistent across zooms
-# but different every time the program runs.
-_EARTH_SEED = random.randint(0, 999999)
-
-
-def _generate_procedural_earth(diameter: int) -> pygame.Surface:
-    """Generates a procedural Earth surface with continents and clouds."""
-    # Use a fixed seed so the Earth looks consistent across different zoom levels (diameters)
-    rng = random.Random(_EARTH_SEED)
-    
-    radius = diameter / 2.0
-    # Create the texture surface (Ocean + Continents + Clouds)
-    texture = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
-    texture.fill((0, 105, 148))  # Deep Ocean Blue
-    
-    # Draw Continents (Random polygons/circles)
-    num_continents = rng.randint(5, 9)
-    for _ in range(num_continents):
-        # Use random() (0.0-1.0) to ensure resolution independence
-        cx = int(rng.random() * diameter)
-        cy = int(rng.random() * diameter)
-        
-        # Scale continent size relative to Earth radius
-        # Radius factor between 0.3 and 0.8
-        r_factor = 0.3 + rng.random() * 0.5
-        cr = int(radius * r_factor)
-        
-        # Color variation
-        color = (34, 139, 34)  # Forest Green
-        if rng.random() > 0.55:
-             color = (160, 82, 45)  # Sienna/Brown
-        
-        pygame.draw.circle(texture, color, (cx, cy), cr)
-        
-    # Draw Clouds
-    num_clouds = rng.randint(10, 18)
-    for _ in range(num_clouds):
-        cx = int(rng.random() * diameter)
-        cy = int(rng.random() * diameter)
-        
-        w_factor = 0.3 + rng.random() * 0.5  # 0.3 to 0.8 of radius
-        h_factor = 0.15 + rng.random() * 0.25 # 0.15 to 0.4 of radius
-        
-        cw = int(radius * w_factor)
-        ch = int(radius * h_factor)
-        
-        # Draw cloud on a temporary surface to handle alpha
-        cloud_surf = pygame.Surface((cw, ch), pygame.SRCALPHA)
-        # White with transparency
-        pygame.draw.ellipse(cloud_surf, (255, 255, 255, 150), cloud_surf.get_rect())
-        texture.blit(cloud_surf, (cx - cw // 2, cy - ch // 2))
-
-    # Create a mask to clip everything into a circle
-    mask = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
-    mask.fill((0, 0, 0, 0))
-    pygame.draw.circle(mask, (255, 255, 255, 255), (int(radius), int(radius)), int(radius))
-
-    # Apply the mask
-    # BLEND_RGBA_MULT will multiply the alpha channels, clipping the texture to the circle
-    texture.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    
-    # Optional: Atmosphere glow/border to make it look nicer
-    pygame.draw.circle(texture, (100, 200, 255), (int(radius), int(radius)), int(radius), 1)
-
-    return texture
-
-
-def _get_scaled_earth_sprite(diameter: int) -> pygame.Surface:
-    if diameter <= 0:
-        raise ValueError("Earth sprite diameter must be positive")
-    
-    cached = _EARTH_SPRITE_CACHE.get(diameter)
-    if cached is not None:
-        return cached
-    
-    # Generate new procedural Earth
-    generated = _generate_procedural_earth(diameter)
-    _EARTH_SPRITE_CACHE[diameter] = generated
-    return generated
-
-
-# =======================
 #   HELPER FUNCTIONS
 # =======================
 def clamp(val, lo, hi):
@@ -245,7 +279,8 @@ def clamp(val, lo, hi):
 
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
-    base_scale = min(width, height) / (2.0 * np.linalg.norm(R0))
+    r0 = get_default_r0()
+    base_scale = min(width, height) / (2.0 * r0)
     return 0.60 * base_scale
 
 
@@ -268,17 +303,19 @@ def world_to_screen(x, y, ppm, camera_center=(0.0, 0.0)):
     return sx, sy
 
 
-def energy_specific(r, v):
+def energy_specific(r, v, mu: float) -> float:
+    """Calculate specific orbital energy using the current planet's mu."""
     rmag = np.linalg.norm(r)
     vmag2 = v[0]*v[0] + v[1]*v[1]
-    return 0.5*vmag2 - MU/rmag
+    return 0.5*vmag2 - mu/rmag
 
 
-def eccentricity(r, v):
+def eccentricity(r, v, mu: float) -> float:
+    """Calculate orbital eccentricity using the current planet's mu."""
     r3 = np.array([r[0], r[1], 0.0])
     v3 = np.array([v[0], v[1], 0.0])
     h = np.cross(r3, v3)
-    e_vec = np.cross(v3, h)/MU - r3/np.linalg.norm(r3)
+    e_vec = np.cross(v3, h)/mu - r3/np.linalg.norm(r3)
     return np.linalg.norm(e_vec[:2])
 
 
@@ -303,21 +340,24 @@ def _format_megameters(value_m: float) -> str:
 # =======================
 #   DRAWING FUNCTIONS
 # =======================
-def draw_earth(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
-    if radius <= 0:
+def draw_planet(surface: pygame.Surface, planet: Planet, position: tuple[int, int], radius_px: int) -> None:
+    """Draw a planet at the given screen position using procedural sprite generation."""
+    if radius_px <= 0:
         return
-    diameter = radius * 2
+    diameter = radius_px * 2
     
-    # Optimization: If Earth is massive (zoomed in very close),
+    # Optimization: If planet is massive (zoomed in very close),
     # just draw a simple circle to avoid generating/blitting huge textures
     # which would cause lag or Out Of Memory errors.
     if diameter > 2048:
-        pygame.draw.circle(surface, (0, 105, 148), position, radius)
+        base_color = planet.base_colors[0] if planet.base_colors else (128, 128, 128)
+        pygame.draw.circle(surface, base_color, position, radius_px)
         return
 
-    sprite = _get_scaled_earth_sprite(diameter)
+    sprite = get_planet_sprite(planet, diameter)
     rect = sprite.get_rect(center=position)
     surface.blit(sprite, rect)
+
 
 def draw_satellite(surface: pygame.Surface, position: tuple[int, int], radius: int) -> None:
     if radius <= 0:
@@ -508,13 +548,14 @@ def draw_coordinate_grid(
     surface.blit(y_axis_label, y_axis_rect)
 
 
-def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[float | None, list[tuple[float, float]]]:
-    eps = energy_specific(r_init, v_init)
+def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray, mu: float) -> tuple[float | None, list[tuple[float, float]]]:
+    """Compute predicted orbit trajectory using the planet's gravitational parameter."""
+    eps = energy_specific(r_init, v_init, mu)
     if eps >= 0.0:
         return None, []
 
-    a = -MU / (2.0 * eps)
-    period = 2.0 * math.pi * math.sqrt(a**3 / MU)
+    a = -mu / (2.0 * eps)
+    period = 2.0 * math.pi * math.sqrt(a**3 / mu)
     estimated_samples = max(360, int(period / ORBIT_PREDICTION_INTERVAL))
     num_samples = max(2, min(MAX_ORBIT_PREDICTION_SAMPLES, estimated_samples))
     dt = period / num_samples
@@ -524,7 +565,7 @@ def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray) -> tuple[fl
     points: list[tuple[float, float]] = []
     for _ in range(num_samples + 1):
         points.append((float(r[0]), float(r[1])))
-        r, v = rk4_step(r, v, dt)
+        r, v = rk4_step(r, v, dt, mu)
 
     return period, points
 
@@ -567,7 +608,7 @@ class Button:
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
-                self._callback()
+                self._callback()    # Call the button's callback function
 
 
 # =======================
@@ -649,12 +690,16 @@ def main():
     grid_axis_font = pygame.font.SysFont("consolas", 16)
     title_font = pygame.font.SysFont("arial", 48, bold=True)
 
-    # Scenario setup
-    current_scenario_key = DEFAULT_SCENARIO_KEY
+    # Scenario setup - dynamic based on current planet
+    # These are mutable references that get updated when planet changes
+    scenarios_list: list[Scenario] = list(get_scenarios_for_planet(current_planet))
+    scenarios_dict: dict[str, Scenario] = {s.key: s for s in scenarios_list}
+    scenario_order: list[str] = [s.key for s in scenarios_list]
+    active_scenario_key: str = scenario_order[0]
+    
     scenario_flash_text: str | None = None
     scenario_flash_time = 0.0
 
-    scenario_shortcut_map: dict[int, str] = {}
     number_key_codes = [
         pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5,
         pygame.K_6, pygame.K_7, pygame.K_8, pygame.K_9,
@@ -663,28 +708,42 @@ def main():
         pygame.K_KP1, pygame.K_KP2, pygame.K_KP3, pygame.K_KP4, pygame.K_KP5,
         pygame.K_KP6, pygame.K_KP7, pygame.K_KP8, pygame.K_KP9,
     ]
-    for index, scenario_key in enumerate(SCENARIO_DISPLAY_ORDER, start=1):
-        if index <= len(number_key_codes):
-            scenario_shortcut_map[number_key_codes[index - 1]] = scenario_key
-        if index <= len(keypad_key_codes):
-            scenario_shortcut_map[keypad_key_codes[index - 1]] = scenario_key
-
+    
+    def build_scenario_shortcut_map() -> dict[int, str]:
+        """Build keyboard shortcut map for current scenarios."""
+        shortcut_map: dict[int, str] = {}
+        for index, key in enumerate(scenario_order, start=1):
+            if index <= len(number_key_codes):
+                shortcut_map[number_key_codes[index - 1]] = key
+            if index <= len(keypad_key_codes):
+                shortcut_map[keypad_key_codes[index - 1]] = key
+        return shortcut_map
+    
+    def build_scenario_help_lines() -> list[str]:
+        """Build help text for current scenarios."""
+        return [
+            f"[{idx}] {scenarios_dict[key].name} – {scenarios_dict[key].description}"
+            for idx, key in enumerate(scenario_order, start=1)
+        ]
+    
+    scenario_shortcut_map = build_scenario_shortcut_map()
     scenario_panel_title = "Scenario Mode – press 1-5 to switch"
-    scenario_help_lines = [
-        f"[{idx}] {SCENARIOS[key].name} – {SCENARIOS[key].description}"
-        for idx, key in enumerate(SCENARIO_DISPLAY_ORDER, start=1)
-    ]
+    scenario_help_lines = build_scenario_help_lines()
 
     def get_current_scenario() -> Scenario:
-        return SCENARIOS[current_scenario_key]
+        return scenarios_dict[active_scenario_key]
 
-    def scenario_velocity_vector(key: str | None = None) -> np.ndarray:
-        scenario = SCENARIOS[key or current_scenario_key]
-        return scenario.velocity_vector()
+    def get_current_r0() -> np.ndarray:
+        """Get starting position vector from current scenario."""
+        return get_current_scenario().position_vector()
+
+    def get_current_velocity() -> np.ndarray:
+        """Get starting velocity vector from current scenario."""
+        return get_current_scenario().velocity_vector()
 
     # Simulation state
-    r = R0.copy()
-    v = scenario_velocity_vector()
+    r = get_current_r0()
+    v = get_current_velocity()
     t_sim = 0.0
     paused = False
     ppm = PIXELS_PER_METER
@@ -736,8 +795,8 @@ def main():
         nonlocal impact_overlay_reveal_time, impact_overlay_visible_since
         nonlocal show_velocity_arrow
         close_logger()
-        r = R0.copy()
-        v = scenario_velocity_vector()
+        r = get_current_r0()
+        v = get_current_velocity()
         t_sim = 0.0
         paused = False
         ppm_target = clamp(ppm_target, MIN_PPM, MAX_PPM)
@@ -753,15 +812,17 @@ def main():
         orbit_markers.clear()
         camera_target[:] = camera_center
         is_dragging_camera = False
-        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v)
+        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v, current_planet.mu)
         impact_info = None
         shock_ring_start = None
         impact_freeze_time = None
         impact_overlay_reveal_time = None
         impact_overlay_visible_since = None
 
+    
+
     state = "menu"  # "menu", "running", "impact"
-    escape_radius_limit = ESCAPE_RADIUS_FACTOR * float(np.linalg.norm(R0))
+    escape_radius_limit = ESCAPE_RADIUS_FACTOR * get_default_r0()
 
     def marker_display_name(marker_type: str) -> str:
         return "Periapsis" if marker_type == "pericenter" else "Apoapsis"
@@ -787,10 +848,10 @@ def main():
         return closest_type
 
     def set_scenario(new_key: str) -> None:
-        nonlocal current_scenario_key, scenario_flash_text, scenario_flash_time
-        if new_key not in SCENARIOS:
+        nonlocal active_scenario_key, scenario_flash_text, scenario_flash_time
+        if new_key not in scenarios_dict:
             return
-        current_scenario_key = new_key
+        active_scenario_key = new_key
         scenario = get_current_scenario()
         scenario_flash_text = f"{scenario.name} scenario loaded"
         scenario_flash_time = time.perf_counter()
@@ -803,10 +864,10 @@ def main():
             return
         rmag = float(np.linalg.norm(r))
         vmag = float(np.linalg.norm(v))
-        eps = float(energy_specific(r, v))
+        eps = float(energy_specific(r, v, current_planet.mu))
         h_vec = np.cross(np.array([r[0], r[1], 0.0]), np.array([v[0], v[1], 0.0]))
         h_mag = float(np.linalg.norm(h_vec))
-        e_val = float(eccentricity(r, v))
+        e_val = float(eccentricity(r, v, current_planet.mu))
         logger.log_ts(
             [
                 float(t_sim),
@@ -828,17 +889,20 @@ def main():
         close_logger()
         logger = RunLogger()
         scenario = get_current_scenario()
+        r0_vector = scenario.position_vector()
         v0_vector = scenario.velocity_vector()
         meta = {
             "scenario_key": scenario.key,
             "scenario_name": scenario.name,
             "scenario_description": scenario.description,
-            "R0": R0.tolist(),
+            "planet_name": current_planet.name,
+            "planet_radius": current_planet.radius,
+            "R0": r0_vector.tolist(),
             "V0": v0_vector.tolist(),
             "v0": float(np.linalg.norm(v0_vector)),
             "G": G,
-            "M": M,
-            "mu": MU,
+            "M": current_planet.mass,
+            "mu": current_planet.mu,
             "integrator": "RK4",
             "dt_phys": DT_PHYS,
             "start_speed": REAL_TIME_SPEED,
@@ -871,7 +935,7 @@ def main():
         radius_world: float,
     ) -> None:
         label = marker_display_name(marker_type)
-        altitude_km = (radius_world - EARTH_RADIUS) / 1_000.0
+        altitude_km = (radius_world - current_planet.radius) / 1_000.0
         text = f"{label}: {altitude_km:,.1f} km"
         text_surf = font.render(text, True, LABEL_TEXT_COLOR)
 
@@ -934,22 +998,43 @@ def main():
             camera_mode = "earth"
 
     def load_next_scenario() -> None:
-        nonlocal current_scenario_key, state, paused
-        if not SCENARIO_DISPLAY_ORDER:
+        nonlocal active_scenario_key, state, paused
+        if not scenario_order:
             return
         try:
-            current_index = SCENARIO_DISPLAY_ORDER.index(current_scenario_key)
+            current_index = scenario_order.index(active_scenario_key)
         except ValueError:
             current_index = 0
-        next_index = (current_index + 1) % len(SCENARIO_DISPLAY_ORDER)
+        next_index = (current_index + 1) % len(scenario_order)
         previous_state = state
-        set_scenario(SCENARIO_DISPLAY_ORDER[next_index])
+        set_scenario(scenario_order[next_index])
         if previous_state == "impact":
             state = "running"
             paused = False
             init_run_logging()
         elif previous_state != "menu":
             state = "running"
+
+    def reload_scenarios_for_planet() -> None:
+        """Reload scenarios when the planet changes."""
+        nonlocal scenarios_list, scenarios_dict, scenario_order, active_scenario_key
+        nonlocal scenario_shortcut_map, scenario_help_lines
+        scenarios_list = list(get_scenarios_for_planet(current_planet))
+        scenarios_dict = {s.key: s for s in scenarios_list}
+        scenario_order = [s.key for s in scenarios_list]
+        active_scenario_key = scenario_order[0]
+        scenario_shortcut_map = build_scenario_shortcut_map()
+        scenario_help_lines = build_scenario_help_lines()
+
+    def cycle_planet() -> None:
+        """Cycle to the next planet preset and reset the simulation."""
+        global current_planet, current_planet_index
+        current_planet_index = (current_planet_index + 1) % len(PLANET_PRESETS)
+        current_planet = get_preset(PLANET_PRESETS[current_planet_index])
+        reload_scenarios_for_planet()
+        reset()
+        if state == "running":
+            init_run_logging()
 
     def reset_and_continue():
         nonlocal state, paused, impact_info, shock_ring_start
@@ -1055,6 +1140,8 @@ def main():
                 if state == "menu":
                     if event.key == pygame.K_SPACE:
                         start_simulation()
+                    elif event.key == pygame.K_p:
+                        cycle_planet()
                     continue
                     
                 if state == "impact":
@@ -1062,6 +1149,11 @@ def main():
                         reset_and_continue()
                     elif event.key == pygame.K_n:
                         load_next_scenario()
+                    elif event.key == pygame.K_p:
+                        cycle_planet()
+                        state = "running"
+                        paused = False
+                        init_run_logging()
                     continue
                     
                 if state == "running":
@@ -1087,6 +1179,8 @@ def main():
                         toggle_camera()
                     elif event.key == pygame.K_v:
                         show_velocity_arrow = not show_velocity_arrow
+                    elif event.key == pygame.K_p:
+                        cycle_planet()
                         
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1 and state == "running":
@@ -1136,10 +1230,16 @@ def main():
             subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, HEIGHT // 3 + 50))
             screen.blit(subtitle_surf, subtitle_rect)
             
+            # Current planet display
+            planet_text = f"Planet: {current_planet.name}"
+            planet_surf = font.render(planet_text, True, HUD_TEXT_COLOR)
+            planet_rect = planet_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+            screen.blit(planet_surf, planet_rect)
+            
             # Press Space prompt
-            prompt_text = "Press SPACE to start"
+            prompt_text = "Press SPACE to start  |  P to change planet"
             prompt_surf = font.render(prompt_text, True, HUD_TEXT_COLOR)
-            prompt_rect = prompt_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
+            prompt_rect = prompt_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
             screen.blit(prompt_surf, prompt_rect)
             
             # Scenario panel
@@ -1160,8 +1260,8 @@ def main():
                 if idx == 0:
                     color = HUD_TEXT_COLOR
                 else:
-                    scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
-                    color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                    sc_key = scenario_order[idx - 1] if idx - 1 < len(scenario_order) else ""
+                    color = HUD_TEXT_COLOR if sc_key == active_scenario_key else MENU_SUBTITLE_COLOR
                 text_surf = scenario_font.render(line, True, color)
                 panel_surface.blit(text_surf, (panel_padding, y))
                 y += line_height
@@ -1196,7 +1296,7 @@ def main():
             dt_step = time_to_simulate / steps_to_run
 
             for _ in range(steps_to_run):
-                r, v = rk4_step(r, v, dt_step)
+                r, v = rk4_step(r, v, dt_step, current_planet.mu)
                 t_sim += dt_step
                 rmag = float(np.linalg.norm(r))
                 
@@ -1217,9 +1317,9 @@ def main():
                     orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
 
                 vmag = float(np.linalg.norm(v))
-                eps = float(energy_specific(r, v))
-                e_val = float(eccentricity(r, v))
-                impact_triggered = not impact_logged and rmag <= EARTH_RADIUS
+                eps = float(energy_specific(r, v, current_planet.mu))
+                e_val = float(eccentricity(r, v, current_planet.mu))
+                impact_triggered = not impact_logged and rmag <= current_planet.radius
 
                 if logger is not None:
                     log_step_counter += 1
@@ -1241,7 +1341,7 @@ def main():
                             "impact",
                             rmag,
                             vmag,
-                            json.dumps({"penetration": EARTH_RADIUS - rmag, "energy": eps}),
+                            json.dumps({"penetration": current_planet.radius - rmag, "energy": eps}),
                         ])
 
                     if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
@@ -1318,7 +1418,7 @@ def main():
 
         mouse_pos = pygame.mouse.get_pos()
         rmag = float(np.linalg.norm(r))
-        earth_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
+        planet_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
 
         # Draw predicted orbit
         if orbit_prediction_points:
@@ -1341,8 +1441,8 @@ def main():
                 draw_orbit_line(orbit_layer, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
                 screen.blit(orbit_layer, (0, 0))
 
-        earth_radius_px = max(1, int(EARTH_RADIUS * ppm))
-        draw_earth(screen, earth_screen_pos, earth_radius_px)
+        planet_radius_px = max(1, int(current_planet.radius * ppm))
+        draw_planet(screen, current_planet, planet_screen_pos, planet_radius_px)
 
         # Shock ring on impact
         if impact_info is not None and shock_ring_start is not None:
@@ -1356,10 +1456,10 @@ def main():
                     )
                 else:
                     ring_center = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
-                base_ring_radius = max(4, compute_satellite_radius(EARTH_RADIUS) * 2)
+                base_ring_radius = max(4, compute_satellite_radius(current_planet.radius) * 2)
                 ring_radius_px = max(
                     base_ring_radius,
-                    int(base_ring_radius + earth_radius_px * SHOCK_RING_EXPANSION_FACTOR * progress),
+                    int(base_ring_radius + planet_radius_px * SHOCK_RING_EXPANSION_FACTOR * progress),
                 )
                 ring_alpha = int(255 * (1.0 - progress))
                 if ring_alpha > 0 and ring_radius_px > 0:
@@ -1432,11 +1532,12 @@ def main():
 
         # HUD
         vmag = float(np.linalg.norm(v))
-        eps = energy_specific(r, v)
-        e = eccentricity(r, v)
-        altitude_km = (rmag - EARTH_RADIUS) / 1_000.0
+        eps = energy_specific(r, v, current_planet.mu)
+        e = eccentricity(r, v, current_planet.mu)
+        altitude_km = (rmag - current_planet.radius) / 1_000.0
         scenario = get_current_scenario()
         hud_entries = [
+            f"Planet: {current_planet.name}",
             f"Scenario: {scenario.name}",
             f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}",
             f"alt {altitude_km:,.1f} km",
@@ -1472,8 +1573,8 @@ def main():
             if idx == 0:
                 color = HUD_TEXT_COLOR
             else:
-                scenario_key = SCENARIO_DISPLAY_ORDER[idx - 1]
-                color = HUD_TEXT_COLOR if scenario_key == current_scenario_key else MENU_SUBTITLE_COLOR
+                sc_key = scenario_order[idx - 1] if idx - 1 < len(scenario_order) else ""
+                color = HUD_TEXT_COLOR if sc_key == active_scenario_key else MENU_SUBTITLE_COLOR
             text_surf = scenario_font.render(line, True, color)
             panel_surface.blit(text_surf, (panel_padding, y))
             y += line_height
