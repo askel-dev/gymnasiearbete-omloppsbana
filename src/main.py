@@ -935,7 +935,7 @@ def main():
             "dt_phys": DT_PHYS,
             "start_speed": REAL_TIME_SPEED,
             "log_strategy": "every_20_steps",
-            "code_version": "v1.0",
+            "code_version": "v1.5",
         }
         logger.write_meta(meta)
         log_step_counter = 0
