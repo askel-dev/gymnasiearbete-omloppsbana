@@ -21,7 +21,6 @@ EVENTS_FILENAME = "events.csv"
 META_FILENAME = "meta.json"
 FIGS_SUBDIR = "figs"
 ENERGY_TOL = 1e-4  # joule per kilogram tolerance for orbit classification
-EARTH_RADIUS = 6_371_000
 
 
 def load_timeseries(path: Path) -> Dict[str, np.ndarray]:
@@ -88,12 +87,12 @@ def estimate_period(events: List[dict]) -> float | None:
     return None
 
 
-def plot_orbit(fig_dir: Path, ts: Dict[str, np.ndarray]) -> None:
+def plot_orbit(fig_dir: Path, ts: Dict[str, np.ndarray], planet_name: str, planet_radius: float) -> None:
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.plot(ts["x"], ts["y"], color="#6bc5c0", lw=1.5, label="Satellit")
-    ax.scatter([0.0], [0.0], color="#4a86f7", s=60, label="Jorden")
+    ax.scatter([0.0], [0.0], color="#4a86f7", s=60, label=planet_name)
     theta = np.linspace(0, 2 * np.pi, 256)
-    ax.plot(EARTH_RADIUS * np.cos(theta), EARTH_RADIUS * np.sin(theta), color="#4a86f7", alpha=0.3)
+    ax.plot(planet_radius * np.cos(theta), planet_radius * np.sin(theta), color="#4a86f7", alpha=0.3)
     ax.set_aspect("equal", "box")
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
@@ -256,7 +255,9 @@ def main() -> None:
     T_sim = estimate_period(events)
     event_summary = summarize_events(events)
 
-    plot_orbit(fig_dir, ts)
+    planet_name = meta.get("planet_name", "Jorden")
+    planet_radius = float(meta.get("planet_radius", 6_371_000))
+    plot_orbit(fig_dir, ts, planet_name, planet_radius)
     plot_energy(fig_dir, ts, rel_drift)
     plot_h(fig_dir, ts)
     plot_eccentricity(fig_dir, ts)

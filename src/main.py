@@ -14,7 +14,7 @@ from pygame.locals import DOUBLEBUF, FULLSCREEN, NOFRAME, RESIZABLE
 from collections import deque
 from dataclasses import dataclass
 
-from physics import G, rk4_step
+from physics import G, rk4_step, euler_step
 from logging_utils import RunLogger
 
 from planet_generator import get_preset, get_planet_sprite, Planet
@@ -30,7 +30,6 @@ current_planet_index = 0
 # =======================
 #   PHYSICS CONSTANTS
 # =======================
-# MU is now accessed via current_planet.mu
 
 # =======================
 #   SCENARIOS
@@ -210,6 +209,7 @@ ESCAPE_RADIUS_FACTOR = 20.0
 ORBIT_PREDICTION_INTERVAL = 1.0
 MAX_ORBIT_PREDICTION_SAMPLES = 2_000
 MAX_RENDERED_ORBIT_POINTS = 800
+integrator = "RK4"              # "RK4" = Runge-Kutta 4, "Euler" = Euler's method
 
 # =======================
 #   DISPLAY SETTINGS
@@ -279,9 +279,34 @@ def clamp(val, lo, hi):
 
 
 def compute_pixels_per_meter(width: int, height: int) -> float:
+    """
+    Calculate pixels per meter based on planet size and orbit distance.
+    
+    Adjusts zoom so that:
+    - The planet appears at a reasonable size on screen (target: ~20-25% of screen height)
+    - The orbit is visible and well-framed
+    """
     r0 = get_default_r0()
-    base_scale = min(width, height) / (2.0 * r0)
-    return 0.60 * base_scale
+    planet_radius = current_planet.radius
+    
+    # Calculate zoom based on planet radius (target: planet diameter = 20-45% of screen height)
+    screen_size = min(width, height)
+    # Use a target size that scales with planet size - larger planets get slightly more screen space
+    target_planet_fraction = 0.20 + min(0.25, (planet_radius / 70_000_000) * 0.25)  # Up to 45% for very large planets
+    target_planet_diameter_px = screen_size * target_planet_fraction
+    planet_scale = target_planet_diameter_px / (2.0 * planet_radius)
+    
+    # Calculate zoom based on orbit distance (target: orbit fits well in view)
+    orbit_scale = min(width, height) / (2.0 * r0) * 0.60
+    
+    # Use a weighted approach: prefer planet scale but ensure orbit is visible
+    # If orbit scale is much smaller, use a compromise
+    if orbit_scale < planet_scale * 0.5:
+        # Orbit is much smaller - use a compromise to show both
+        return (planet_scale + orbit_scale) / 2.0
+    else:
+        # Use the smaller scale to ensure both planet and orbit are visible
+        return min(planet_scale, orbit_scale)
 
 
 def update_display_metrics(width: int, height: int) -> None:
@@ -565,7 +590,10 @@ def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray, mu: float) 
     points: list[tuple[float, float]] = []
     for _ in range(num_samples + 1):
         points.append((float(r[0]), float(r[1])))
-        r, v = rk4_step(r, v, dt, mu)
+        if integrator == "RK4":
+            r, v = rk4_step(r, v, dt, mu)
+        elif integrator == "Euler":
+            r, v = euler_step(r, v, dt, mu)
 
     return period, points
 
@@ -994,6 +1022,8 @@ def main():
             camera_mode = "satellite"
         elif camera_mode == "satellite":
             camera_mode = "manual"
+            # Sync target to prevent drift when switching to manual
+            camera_target[:] = camera_center
         else:
             camera_mode = "earth"
 
@@ -1028,10 +1058,14 @@ def main():
 
     def cycle_planet() -> None:
         """Cycle to the next planet preset and reset the simulation."""
-        global current_planet, current_planet_index
+        global current_planet, current_planet_index, PIXELS_PER_METER
+        nonlocal ppm_target
         current_planet_index = (current_planet_index + 1) % len(PLANET_PRESETS)
         current_planet = get_preset(PLANET_PRESETS[current_planet_index])
         reload_scenarios_for_planet()
+        # Recalculate zoom level for the new planet
+        PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
+        ppm_target = PIXELS_PER_METER
         reset()
         if state == "running":
             init_run_logging()
@@ -1049,6 +1083,9 @@ def main():
 
     def update_sim_button_layout() -> None:
         if not sim_buttons:
+            if state == "running":
+                for btn in sim_buttons:
+                    btn.handle_event(event)
             return
         total_buttons = len(sim_buttons)
         total_height = total_buttons * button_height + (total_buttons - 1) * button_gap
@@ -1076,6 +1113,20 @@ def main():
     ]
 
     update_sim_button_layout()
+
+    def toggle_integrator() -> None:
+        global integrator
+        integrator = "RK4" if integrator == "Euler" else "Euler"
+        print(f"Integrator: {integrator}")
+        update_sim_button_layout()
+    menu_buttons = [
+        Button(
+            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
+            "Integrator: RK4",
+            toggle_integrator,
+            lambda: f"Integrator: {integrator}",
+        ),
+    ]
 
     def toggle_fullscreen_mode() -> None:
         nonlocal screen, fullscreen_enabled, overlay_size
@@ -1116,6 +1167,7 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 quit_app()
+
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     quit_app()
@@ -1183,6 +1235,10 @@ def main():
                         cycle_planet()
                         
             elif event.type == pygame.MOUSEBUTTONDOWN:
+
+                if state == "menu":
+                    for btn in menu_buttons:
+                        btn.handle_event(event)
                 if event.button == 1 and state == "running":
                     if not is_over_button(event.pos):
                         is_dragging_camera = True
@@ -1205,6 +1261,37 @@ def main():
                         camera_center[1] += dy / ppm
                         camera_target[:] = camera_center
                         drag_last_pos = event.pos
+            elif event.type == pygame.MOUSEWHEEL:
+                if state == "running" and event.y != 0:
+                    zoom_factor = 1.1 ** event.y
+                    new_ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
+
+                    if camera_mode == "manual":
+                        # Mouse-centered zoom logic
+                        mx, my = pygame.mouse.get_pos()
+                        w_half = WIDTH / 2.0
+                        h_half = HEIGHT / 2.0
+                        
+                        # 1. Calculate World position under mouse using CURRENT ppm and center
+                        # Formula derived from world_to_screen inversion
+                        m_wx = camera_center[0] + (mx - w_half) / ppm
+                        m_wy = camera_center[1] + (h_half - my) / ppm
+
+                        # 2. Calculate where the camera target MUST be for that World position 
+                        # to project back to the same mouse screen coordinates at the NEW ppm scale.
+                        # mx = w_half + (m_wx - target_cx) * new_ppm_target
+                        target_cx = m_wx - (mx - w_half) / new_ppm_target
+                        
+                        # my = h_half - (m_wy - target_cy) * new_ppm_target (inverted Y)
+                        target_cy = m_wy - (h_half - my) / new_ppm_target
+
+                        camera_target[:] = (target_cx, target_cy)
+                    
+                    ppm_target = new_ppm_target
+            
+            if state == "running":
+                for btn in sim_buttons:
+                    btn.handle_event(event)
             elif event.type == pygame.MOUSEWHEEL:
                 if state == "running" and event.y != 0:
                     zoom_factor = 1.1 ** event.y
@@ -1241,6 +1328,10 @@ def main():
             prompt_surf = font.render(prompt_text, True, HUD_TEXT_COLOR)
             prompt_rect = prompt_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
             screen.blit(prompt_surf, prompt_rect)
+
+            mouse_pos = pygame.mouse.get_pos()
+            for btn in menu_buttons:
+                btn.draw(screen, font, mouse_pos)
             
             # Scenario panel
             panel_lines = [scenario_panel_title, *scenario_help_lines]
@@ -1296,7 +1387,10 @@ def main():
             dt_step = time_to_simulate / steps_to_run
 
             for _ in range(steps_to_run):
-                r, v = rk4_step(r, v, dt_step, current_planet.mu)
+                if integrator == "RK4":
+                    r, v = rk4_step(r, v, dt_step, current_planet.mu)
+                elif integrator == "Euler":
+                    r, v = euler_step(r, v, dt_step, current_planet.mu)
                 t_sim += dt_step
                 rmag = float(np.linalg.norm(r))
                 
@@ -1399,7 +1493,12 @@ def main():
         elif camera_mode == "satellite":
             camera_target[:] = (r[0], r[1])
         else:
-            camera_target[:] = camera_center
+            # Manual mode
+            # Only lock target to center if dragging.
+            # Otherwise, allow camera_target to differ (e.g. set by zoom logic)
+            if is_dragging_camera:
+                camera_target[:] = camera_center
+        
         camera_center += (camera_target - camera_center) * 0.1
 
         # === RENDER ===
@@ -1539,6 +1638,7 @@ def main():
         hud_entries = [
             f"Planet: {current_planet.name}",
             f"Scenario: {scenario.name}",
+            f"Integrator: {integrator}",
             f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}",
             f"alt {altitude_km:,.1f} km",
             f"|v| {vmag:,.1f} m/s   e {e:.3f}",

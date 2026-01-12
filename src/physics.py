@@ -29,6 +29,25 @@ def get_acceleration(r_position: np.ndarray, mu: float) -> np.ndarray:
     return -mu * r_position / (dist**3)
 
 
+def euler_step(r: np.ndarray, v: np.ndarray, dt: float, mu: float = MU_EARTH) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Basic Euler Integration.
+    
+    Args:
+        r: Position vector
+        v: Velocity vector
+        dt: Time step
+        mu: Gravitational parameter (G * M) of the central body. Defaults to Earth.
+    
+    Returns:
+        Tuple of (new_position, new_velocity)
+    """
+    a = get_acceleration(r, mu)
+    r_new = r + v * dt
+    v_new = v + a * dt
+    return r_new, v_new
+
+
 def rk4_step(r: np.ndarray, v: np.ndarray, dt: float, mu: float = MU_EARTH) -> tuple[np.ndarray, np.ndarray]:
     """
     Runge-Kutta 4 Integration.
