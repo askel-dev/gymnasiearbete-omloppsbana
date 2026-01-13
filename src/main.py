@@ -232,11 +232,24 @@ VEL_ARROW_MIN_PIXELS = 0
 VEL_ARROW_MAX_PIXELS = 90
 VEL_ARROW_HEAD_LENGTH = 10
 VEL_ARROW_HEAD_ANGLE_DEG = 26
-BUTTON_COLOR = (8, 32, 64, int(255 * 0.78))
-BUTTON_HOVER_COLOR = (18, 52, 94, int(255 * 0.88))
-BUTTON_TEXT_COLOR = (234, 241, 255)
-BUTTON_RADIUS = 18
-MENU_SUBTITLE_COLOR = (180, 198, 228)
+# Menu color palette
+MENU_BACKGROUND = (10, 15, 30)
+BUTTON_IDLE = (30, 40, 60, 200)
+BUTTON_HOVER = (50, 70, 100, 220)
+BUTTON_SELECTED = (0, 120, 215, 255)
+BUTTON_START = (40, 160, 80, 255)
+BUTTON_START_HOVER = (60, 190, 100, 255)
+BUTTON_OUTLINE = (70, 90, 120)
+PREVIEW_PLACEHOLDER = (25, 35, 55, 200)
+TEXT_WHITE = (255, 255, 255)
+TEXT_GRAY = (180, 180, 180)
+BUTTON_RADIUS = 12
+MENU_SUBTITLE_COLOR = (180, 180, 180)
+MENU_SECTION_TITLE_COLOR = (180, 180, 180)
+MENU_PANEL_COLOR = (15, 20, 35, int(255 * 0.85))
+MENU_COLUMN_DIVIDER_COLOR = (50, 60, 80, 120)
+MENU_FOOTER_COLOR = (8, 12, 25, int(255 * 0.92))
+MENU_BRIEFING_TEXT_COLOR = (200, 210, 230)
 LABEL_BACKGROUND_COLOR = (12, 18, 30, int(255 * 0.18))
 LABEL_MARKER_COLOR = (46, 209, 195)
 LABEL_TEXT_COLOR = (234, 241, 255)
@@ -576,26 +589,46 @@ def draw_coordinate_grid(
 def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray, mu: float) -> tuple[float | None, list[tuple[float, float]]]:
     """Compute predicted orbit trajectory using the planet's gravitational parameter."""
     eps = energy_specific(r_init, v_init, mu)
-    if eps >= 0.0:
-        return None, []
-
-    a = -mu / (2.0 * eps)
-    period = 2.0 * math.pi * math.sqrt(a**3 / mu)
-    estimated_samples = max(360, int(period / ORBIT_PREDICTION_INTERVAL))
-    num_samples = max(2, min(MAX_ORBIT_PREDICTION_SAMPLES, estimated_samples))
-    dt = period / num_samples
-
+    
     r = r_init.copy()
     v = v_init.copy()
     points: list[tuple[float, float]] = []
-    for _ in range(num_samples + 1):
-        points.append((float(r[0]), float(r[1])))
-        if integrator == "RK4":
-            r, v = rk4_step(r, v, dt, mu)
-        elif integrator == "Euler":
-            r, v = euler_step(r, v, dt, mu)
-
-    return period, points
+    
+    if eps < 0.0:
+        # BOUND ORBIT (elliptical): compute one full period
+        a = -mu / (2.0 * eps)
+        period = 2.0 * math.pi * math.sqrt(a**3 / mu)
+        estimated_samples = max(360, int(period / ORBIT_PREDICTION_INTERVAL))
+        num_samples = max(2, min(MAX_ORBIT_PREDICTION_SAMPLES, estimated_samples))
+        dt = period / num_samples
+        
+        for _ in range(num_samples + 1):
+            points.append((float(r[0]), float(r[1])))
+            if integrator == "RK4":
+                r, v = rk4_step(r, v, dt, mu)
+            elif integrator == "Euler":
+                r, v = euler_step(r, v, dt, mu)
+        
+        return period, points
+    else:
+        # OPEN TRAJECTORY (parabolic/hyperbolic): propagate until far away
+        r0_mag = np.linalg.norm(r_init)
+        escape_limit = ESCAPE_RADIUS_FACTOR * r0_mag  # Use existing factor
+        v_mag = np.linalg.norm(v_init)
+        # Estimate time to reach escape limit (rough approximation)
+        estimated_time = escape_limit / max(v_mag, 1.0) * 2.0
+        dt = estimated_time / MAX_ORBIT_PREDICTION_SAMPLES
+        
+        for _ in range(MAX_ORBIT_PREDICTION_SAMPLES):
+            points.append((float(r[0]), float(r[1])))
+            if np.linalg.norm(r) > escape_limit:
+                break
+            if integrator == "RK4":
+                r, v = rk4_step(r, v, dt, mu)
+            elif integrator == "Euler":
+                r, v = euler_step(r, v, dt, mu)
+        
+        return None, points  # No period for open trajectories
 
 
 # =======================
@@ -619,17 +652,15 @@ class Button:
         if mouse_pos is None:
             mouse_pos = pygame.mouse.get_pos()
         hovered = self.rect.collidepoint(mouse_pos)
-        color = BUTTON_HOVER_COLOR if hovered else BUTTON_COLOR
         button_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-        pygame.draw.rect(
-            button_surface,
-            color,
-            button_surface.get_rect(),
-            border_radius=BUTTON_RADIUS,
-        )
+        if hovered:
+            pygame.draw.rect(button_surface, BUTTON_HOVER, button_surface.get_rect(), border_radius=BUTTON_RADIUS)
+        else:
+            pygame.draw.rect(button_surface, BUTTON_IDLE, button_surface.get_rect(), border_radius=BUTTON_RADIUS)
+            pygame.draw.rect(button_surface, BUTTON_OUTLINE, button_surface.get_rect(), width=1, border_radius=BUTTON_RADIUS)
         surface.blit(button_surface, self.rect.topleft)
         text_value = self.get_text()
-        text_surf = font.render(text_value, True, BUTTON_TEXT_COLOR)
+        text_surf = font.render(text_value, True, TEXT_WHITE)
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
 
@@ -654,6 +685,410 @@ def _set_display_mode_with_vsync(size: tuple[int, int], flags: int = 0) -> pygam
             return pygame.display.set_mode(size, flags)
         except pygame.error:
             raise err
+
+
+# =======================
+#   MAIN MENU
+# =======================
+def wrap_text(text: str, font: pygame.font.Font, max_width: int) -> list[str]:
+    """Wrap text to fit within max_width pixels."""
+    words = text.split()
+    lines = []
+    current_line = []
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        if font.size(test_line)[0] <= max_width:
+            current_line.append(word)
+        else:
+            if current_line:
+                lines.append(' '.join(current_line))
+            current_line = [word]
+    if current_line:
+        lines.append(' '.join(current_line))
+    return lines
+
+
+def run_main_menu(
+    screen: pygame.Surface,
+    clock: pygame.time.Clock,
+    initial_planet: Planet,
+    initial_scenario: Scenario | None = None,
+) -> tuple[Planet, Scenario] | None:
+    """
+    Display main menu with planet and scenario selection.
+    Returns (selected_planet, selected_scenario) when user clicks Start.
+    Returns None if user wants to quit.
+    """
+    global integrator, WIDTH, HEIGHT, PIXELS_PER_METER
+    
+    # Fonts
+    font = pygame.font.SysFont("consolas", 16)
+    font_small = pygame.font.SysFont("consolas", 14)
+    font_fps = pygame.font.SysFont("consolas", 14)
+    title_font = pygame.font.SysFont("arial", 52, bold=True)
+    section_font = pygame.font.SysFont("consolas", 15, bold=True)
+    briefing_title_font = pygame.font.SysFont("arial", 22, bold=True)
+    briefing_font = pygame.font.SysFont("consolas", 15)
+    
+    # Generate starfield (100 random stars)
+    rng = random.Random(42)  # Fixed seed for consistent starfield
+    stars = [(rng.randint(0, 2000), rng.randint(0, 1500), rng.randint(1, 3), rng.randint(100, 255)) 
+             for _ in range(100)]
+    
+    # State
+    selected_planet = initial_planet
+    scenarios = list(get_scenarios_for_planet(selected_planet))
+    if initial_scenario and initial_scenario in scenarios:
+        selected_scenario = initial_scenario
+    else:
+        selected_scenario = scenarios[0] if scenarios else None
+    
+    # Button dimensions
+    planet_btn_height = 32
+    scenario_btn_height = 32
+    start_btn_width = 220
+    start_btn_height = 46
+    btn_gap = 6
+    
+    def update_scenarios():
+        nonlocal scenarios, selected_scenario
+        scenarios = list(get_scenarios_for_planet(selected_planet))
+        selected_scenario = scenarios[0] if scenarios else None
+    
+    while True:
+        current_size = screen.get_size()
+        WIDTH, HEIGHT = current_size
+        
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # =====================
+        # Layout Calculations
+        # =====================
+        panel_margin = 30
+        panel_top = 110
+        footer_height = 75
+        panel_bottom = HEIGHT - footer_height - 15
+        
+        panel_rect = pygame.Rect(
+            panel_margin,
+            panel_top,
+            WIDTH - 2 * panel_margin,
+            panel_bottom - panel_top
+        )
+        
+        # Column widths (25%, 35%, 40%)
+        col1_width = int(panel_rect.width * 0.25)
+        col2_width = int(panel_rect.width * 0.35)
+        col3_width = panel_rect.width - col1_width - col2_width
+        
+        col1_x = panel_rect.left
+        col2_x = col1_x + col1_width
+        col3_x = col2_x + col2_width
+        content_top = panel_rect.top + 20
+        col_padding = 15
+        
+        # Button widths based on column widths
+        planet_btn_width = col1_width - 2 * col_padding
+        scenario_btn_width = col2_width - 2 * col_padding
+        
+        # =====================
+        # Event Handling
+        # =====================
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                    if selected_scenario:
+                        return (selected_planet, selected_scenario)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Check planet buttons (Column 1)
+                for i, preset_name in enumerate(PLANET_PRESETS):
+                    btn_x = col1_x + col_padding
+                    btn_y = content_top + 35 + i * (planet_btn_height + btn_gap)
+                    btn_rect = pygame.Rect(btn_x, btn_y, planet_btn_width, planet_btn_height)
+                    if btn_rect.collidepoint(event.pos):
+                        selected_planet = get_preset(preset_name)
+                        update_scenarios()
+                        break
+                
+                # Check scenario buttons (Column 2)
+                for i, scenario in enumerate(scenarios):
+                    btn_x = col2_x + col_padding
+                    btn_y = content_top + 35 + i * (scenario_btn_height + btn_gap)
+                    btn_rect = pygame.Rect(btn_x, btn_y, scenario_btn_width, scenario_btn_height)
+                    if btn_rect.collidepoint(event.pos):
+                        selected_scenario = scenario
+                        break
+                
+                # Check start button (bottom of right column)
+                start_btn_x = col3_x + col_padding
+                start_btn_y = panel_rect.bottom - start_btn_height - 15
+                start_rect = pygame.Rect(start_btn_x, start_btn_y, col3_width - 2 * col_padding, start_btn_height)
+                if start_rect.collidepoint(event.pos) and selected_scenario:
+                    return (selected_planet, selected_scenario)
+                
+                # Check integrator button (Footer)
+                integrator_rect = pygame.Rect(panel_margin + 10, HEIGHT - footer_height + 20, 140, 32)
+                if integrator_rect.collidepoint(event.pos):
+                    integrator = "Euler" if integrator == "RK4" else "RK4"
+        
+        # =====================
+        # Render
+        # =====================
+        screen.fill(BACKGROUND_COLOR)
+        
+        # Draw starfield
+        for star_x, star_y, star_size, star_brightness in stars:
+            # Wrap stars to current screen size
+            sx = star_x % WIDTH
+            sy = star_y % HEIGHT
+            star_color = (star_brightness, star_brightness, star_brightness)
+            if star_size == 1:
+                screen.set_at((sx, sy), star_color)
+            else:
+                pygame.draw.circle(screen, star_color, (sx, sy), star_size // 2 + 1)
+        
+        # Title with shadow
+        title_text = "SIMULERING AV OMLOPPSBANA"
+        # Shadow (offset by 2 pixels)
+        shadow_surf = title_font.render(title_text, True, (0, 0, 0))
+        shadow_rect = shadow_surf.get_rect(center=(WIDTH // 2 + 2, 50 + 2))
+        screen.blit(shadow_surf, shadow_rect)
+        # Main title
+        title_surf = title_font.render(title_text, True, TEXT_WHITE)
+        title_rect = title_surf.get_rect(center=(WIDTH // 2, 50))
+        screen.blit(title_surf, title_rect)
+        
+        # Subtitle
+        subtitle_text = "av Axel Jönsson"
+        subtitle_surf = font_small.render(subtitle_text, True, MENU_SUBTITLE_COLOR)
+        subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, 90))
+        screen.blit(subtitle_surf, subtitle_rect)
+        
+        # =====================
+        # Main Container Panel
+        # =====================
+        panel_surface = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(panel_surface, MENU_PANEL_COLOR, panel_surface.get_rect(), border_radius=16)
+        screen.blit(panel_surface, panel_rect.topleft)
+        
+        # Column dividers
+        divider1_x = col2_x
+        divider2_x = col3_x
+        pygame.draw.line(screen, MENU_COLUMN_DIVIDER_COLOR,
+                         (divider1_x, panel_rect.top + 15),
+                         (divider1_x, panel_rect.bottom - 15), 1)
+        pygame.draw.line(screen, MENU_COLUMN_DIVIDER_COLOR,
+                         (divider2_x, panel_rect.top + 15),
+                         (divider2_x, panel_rect.bottom - 15), 1)
+        
+        # =====================
+        # Column 1: Celestial Body Selection
+        # =====================
+        planet_title = section_font.render("Celestial Body", True, TEXT_GRAY)
+        screen.blit(planet_title, (col1_x + col_padding, content_top))
+        
+        for i, preset_name in enumerate(PLANET_PRESETS):
+            btn_x = col1_x + col_padding
+            btn_y = content_top + 35 + i * (planet_btn_height + btn_gap)
+            btn_rect = pygame.Rect(btn_x, btn_y, planet_btn_width, planet_btn_height)
+            
+            is_selected = selected_planet.name.lower() == preset_name.lower()
+            is_hovered = btn_rect.collidepoint(mouse_pos)
+            
+            btn_surface = pygame.Surface(btn_rect.size, pygame.SRCALPHA)
+            if is_selected:
+                # Solid fill for selected button
+                pygame.draw.rect(btn_surface, BUTTON_SELECTED, btn_surface.get_rect(), border_radius=BUTTON_RADIUS)
+            elif is_hovered:
+                # Brighter fill on hover
+                pygame.draw.rect(btn_surface, BUTTON_HOVER, btn_surface.get_rect(), border_radius=BUTTON_RADIUS)
+            else:
+                # Semi-transparent fill with outline for idle
+                pygame.draw.rect(btn_surface, BUTTON_IDLE, btn_surface.get_rect(), border_radius=BUTTON_RADIUS)
+                pygame.draw.rect(btn_surface, BUTTON_OUTLINE, btn_surface.get_rect(), width=1, border_radius=BUTTON_RADIUS)
+            screen.blit(btn_surface, btn_rect.topleft)
+            
+            text_surf = font.render(preset_name.capitalize(), True, TEXT_WHITE)
+            text_rect = text_surf.get_rect(center=btn_rect.center)
+            screen.blit(text_surf, text_rect)
+        
+        # =====================
+        # Column 2: Scenario Parameters
+        # =====================
+        scenario_title = section_font.render("Scenario", True, TEXT_GRAY)
+        screen.blit(scenario_title, (col2_x + col_padding, content_top))
+        
+        for i, scenario in enumerate(scenarios):
+            btn_x = col2_x + col_padding
+            btn_y = content_top + 35 + i * (scenario_btn_height + btn_gap)
+            btn_rect = pygame.Rect(btn_x, btn_y, scenario_btn_width, scenario_btn_height)
+            
+            is_selected = selected_scenario and scenario.key == selected_scenario.key
+            is_hovered = btn_rect.collidepoint(mouse_pos)
+            
+            btn_surface = pygame.Surface(btn_rect.size, pygame.SRCALPHA)
+            if is_selected:
+                # Solid fill for selected button
+                pygame.draw.rect(btn_surface, BUTTON_SELECTED, btn_surface.get_rect(), border_radius=BUTTON_RADIUS)
+            elif is_hovered:
+                # Brighter fill on hover
+                pygame.draw.rect(btn_surface, BUTTON_HOVER, btn_surface.get_rect(), border_radius=BUTTON_RADIUS)
+            else:
+                # Semi-transparent fill with outline for idle
+                pygame.draw.rect(btn_surface, BUTTON_IDLE, btn_surface.get_rect(), border_radius=BUTTON_RADIUS)
+                pygame.draw.rect(btn_surface, BUTTON_OUTLINE, btn_surface.get_rect(), width=1, border_radius=BUTTON_RADIUS)
+            screen.blit(btn_surface, btn_rect.topleft)
+            
+            text_surf = font.render(scenario.name, True, TEXT_WHITE)
+            text_rect = text_surf.get_rect(center=btn_rect.center)
+            screen.blit(text_surf, text_rect)
+        
+        # =====================
+        # Column 3: Mission Briefing
+        # =====================
+        briefing_title = section_font.render("Mission Briefing", True, TEXT_GRAY)
+        screen.blit(briefing_title, (col3_x + col_padding, content_top))
+        
+        if selected_scenario:
+            briefing_y = content_top + 40
+            
+            # Scenario name (larger)
+            name_surf = briefing_title_font.render(selected_scenario.name, True, TEXT_WHITE)
+            screen.blit(name_surf, (col3_x + col_padding, briefing_y))
+            briefing_y += 35
+            
+            # Description (word-wrapped)
+            wrap_width = col3_width - 2 * col_padding
+            desc_lines = wrap_text(selected_scenario.description, briefing_font, wrap_width)
+            for line in desc_lines:
+                line_surf = briefing_font.render(line, True, MENU_BRIEFING_TEXT_COLOR)
+                screen.blit(line_surf, (col3_x + col_padding, briefing_y))
+                briefing_y += briefing_font.get_linesize() + 2
+            
+            briefing_y += 15
+            
+            # Parameters section
+            params_title = section_font.render("Parameters", True, TEXT_GRAY)
+            screen.blit(params_title, (col3_x + col_padding, briefing_y))
+            briefing_y += 25
+            
+            # Calculate altitude
+            altitude_km = (selected_scenario.r0 - selected_planet.radius) / 1000
+            velocity_ms = abs(selected_scenario.velocity)
+            direction = "Prograde" if selected_scenario.velocity > 0 else "Retrograde"
+            
+            # Parameters with gray labels and white values (two-column layout)
+            params = [
+                ("Planet:", selected_planet.name),
+                ("Starting Altitude:", f"{altitude_km:,.0f} km"),
+                ("Initial Velocity:", f"{velocity_ms:,.0f} m/s"),
+                ("Direction:", direction),
+            ]
+            
+            # Fixed offset for value column alignment (ensures numbers line up)
+            value_x_offset = 145
+            
+            for label, value in params:
+                # Column 1: Label (left-aligned)
+                label_surf = briefing_font.render(label, True, TEXT_GRAY)
+                screen.blit(label_surf, (col3_x + col_padding, briefing_y))
+                # Column 2: Value (at fixed offset)
+                value_surf = briefing_font.render(value, True, TEXT_WHITE)
+                screen.blit(value_surf, (col3_x + col_padding + value_x_offset, briefing_y))
+                briefing_y += briefing_font.get_linesize() + 6
+            
+            briefing_y += 15
+            
+            # Planet Preview Area
+            preview_height = min(350, panel_rect.bottom - briefing_y - start_btn_height - 50)
+            preview_height = max(150, preview_height)  # Minimum size
+            preview_x = col3_x + col_padding
+            preview_y = briefing_y
+            preview_rect = pygame.Rect(preview_x, preview_y, col3_width - 2 * col_padding, preview_height)
+            
+            # Draw preview background (no outline - cleaner look)
+            preview_surface = pygame.Surface(preview_rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(preview_surface, PREVIEW_PLACEHOLDER, preview_surface.get_rect(), border_radius=8)
+            screen.blit(preview_surface, preview_rect.topleft)
+            
+            # Generate and draw rotating planet sprite
+            planet_sprite_size = min(preview_rect.width, preview_rect.height) - 50
+            planet_sprite = get_planet_sprite(selected_planet, planet_sprite_size)
+            
+            # Slow rotation animation
+            rotation_angle = (pygame.time.get_ticks() / 80) % 360
+            rotated_sprite = pygame.transform.rotate(planet_sprite, rotation_angle)
+            
+            # Center the rotated sprite (slightly above center to leave room for label)
+            sprite_center_y = preview_rect.centery - 10
+            sprite_rect = rotated_sprite.get_rect(center=(preview_rect.centerx, sprite_center_y))
+            screen.blit(rotated_sprite, sprite_rect)
+            
+            # Planet name label at fixed position (below planet area)
+            planet_label = font_small.render(selected_planet.name, True, TEXT_GRAY)
+            label_y = sprite_center_y + planet_sprite_size // 2 + 12  # Fixed position based on original sprite size
+            planet_label_rect = planet_label.get_rect(centerx=preview_rect.centerx, top=label_y)
+            screen.blit(planet_label, planet_label_rect)
+        
+        # Start button (bottom of right column)
+        start_btn_x = col3_x + col_padding
+        start_btn_y = panel_rect.bottom - start_btn_height - 15
+        start_rect = pygame.Rect(start_btn_x, start_btn_y, col3_width - 2 * col_padding, start_btn_height)
+        is_hovered = start_rect.collidepoint(mouse_pos)
+        
+        start_surface = pygame.Surface(start_rect.size, pygame.SRCALPHA)
+        if is_hovered:
+            pygame.draw.rect(start_surface, BUTTON_START_HOVER, start_surface.get_rect(), border_radius=BUTTON_RADIUS)
+        else:
+            pygame.draw.rect(start_surface, BUTTON_START, start_surface.get_rect(), border_radius=BUTTON_RADIUS)
+        screen.blit(start_surface, start_rect.topleft)
+        
+        start_text = font.render("Start Simulation", True, TEXT_WHITE)
+        start_text_rect = start_text.get_rect(center=start_rect.center)
+        screen.blit(start_text, start_text_rect)
+        
+        # =====================
+        # Footer Bar
+        # =====================
+        footer_rect = pygame.Rect(0, HEIGHT - footer_height, WIDTH, footer_height)
+        footer_surface = pygame.Surface(footer_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(footer_surface, MENU_FOOTER_COLOR, footer_surface.get_rect())
+        screen.blit(footer_surface, footer_rect.topleft)
+        
+        # Integrator toggle button (footer left)
+        integrator_rect = pygame.Rect(panel_margin + 10, HEIGHT - footer_height + 20, 140, 32)
+        is_hovered = integrator_rect.collidepoint(mouse_pos)
+        
+        int_surface = pygame.Surface(integrator_rect.size, pygame.SRCALPHA)
+        if is_hovered:
+            pygame.draw.rect(int_surface, BUTTON_HOVER, int_surface.get_rect(), border_radius=BUTTON_RADIUS)
+        else:
+            pygame.draw.rect(int_surface, BUTTON_IDLE, int_surface.get_rect(), border_radius=BUTTON_RADIUS)
+            pygame.draw.rect(int_surface, BUTTON_OUTLINE, int_surface.get_rect(), width=1, border_radius=BUTTON_RADIUS)
+        screen.blit(int_surface, integrator_rect.topleft)
+        
+        int_text = font_small.render(f"Integrator: {integrator}", True, TEXT_WHITE)
+        int_text_rect = int_text.get_rect(center=integrator_rect.center)
+        screen.blit(int_text, int_text_rect)
+        
+        # Instructions (centered in footer)
+        inst_text = "Press SPACE or ENTER to start  |  ESC to quit"
+        inst_surf = font_small.render(inst_text, True, TEXT_GRAY)
+        inst_rect = inst_surf.get_rect(center=(WIDTH // 2, HEIGHT - footer_height // 2))
+        screen.blit(inst_surf, inst_rect)
+        
+        # FPS (bottom right corner)
+        fps_value = clock.get_fps()
+        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (140, 180, 220))
+        fps_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 3))
+        screen.blit(fps_text, fps_rect)
+        
+        pygame.display.flip()
+        clock.tick(60)
 
 
 # =======================
@@ -718,45 +1153,14 @@ def main():
     grid_axis_font = pygame.font.SysFont("consolas", 16)
     title_font = pygame.font.SysFont("arial", 48, bold=True)
 
-    # Scenario setup - dynamic based on current planet
-    # These are mutable references that get updated when planet changes
-    scenarios_list: list[Scenario] = list(get_scenarios_for_planet(current_planet))
-    scenarios_dict: dict[str, Scenario] = {s.key: s for s in scenarios_list}
-    scenario_order: list[str] = [s.key for s in scenarios_list]
-    active_scenario_key: str = scenario_order[0]
+    # Mutable state containers that will be updated from menu
+    scenarios_list: list[Scenario] = []
+    scenarios_dict: dict[str, Scenario] = {}
+    scenario_order: list[str] = []
+    active_scenario_key: str = ""
     
     scenario_flash_text: str | None = None
     scenario_flash_time = 0.0
-
-    number_key_codes = [
-        pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5,
-        pygame.K_6, pygame.K_7, pygame.K_8, pygame.K_9,
-    ]
-    keypad_key_codes = [
-        pygame.K_KP1, pygame.K_KP2, pygame.K_KP3, pygame.K_KP4, pygame.K_KP5,
-        pygame.K_KP6, pygame.K_KP7, pygame.K_KP8, pygame.K_KP9,
-    ]
-    
-    def build_scenario_shortcut_map() -> dict[int, str]:
-        """Build keyboard shortcut map for current scenarios."""
-        shortcut_map: dict[int, str] = {}
-        for index, key in enumerate(scenario_order, start=1):
-            if index <= len(number_key_codes):
-                shortcut_map[number_key_codes[index - 1]] = key
-            if index <= len(keypad_key_codes):
-                shortcut_map[keypad_key_codes[index - 1]] = key
-        return shortcut_map
-    
-    def build_scenario_help_lines() -> list[str]:
-        """Build help text for current scenarios."""
-        return [
-            f"[{idx}] {scenarios_dict[key].name} – {scenarios_dict[key].description}"
-            for idx, key in enumerate(scenario_order, start=1)
-        ]
-    
-    scenario_shortcut_map = build_scenario_shortcut_map()
-    scenario_panel_title = "Scenario Mode – press 1-5 to switch"
-    scenario_help_lines = build_scenario_help_lines()
 
     def get_current_scenario() -> Scenario:
         return scenarios_dict[active_scenario_key]
@@ -769,9 +1173,9 @@ def main():
         """Get starting velocity vector from current scenario."""
         return get_current_scenario().velocity_vector()
 
-    # Simulation state
-    r = get_current_r0()
-    v = get_current_velocity()
+    # Simulation state - will be reset when entering simulation
+    r = np.array([0.0, 0.0], dtype=float)
+    v = np.array([0.0, 0.0], dtype=float)
     t_sim = 0.0
     paused = False
     ppm = PIXELS_PER_METER
@@ -849,8 +1253,14 @@ def main():
 
     
 
-    state = "menu"  # "menu", "running", "impact"
+    state = "running"  # "running", "impact" (menu is now handled separately)
+    return_to_menu = False  # Flag to signal return to main menu
     escape_radius_limit = ESCAPE_RADIUS_FACTOR * get_default_r0()
+    
+    def go_to_menu() -> None:
+        """Signal that we want to return to the main menu."""
+        nonlocal return_to_menu
+        return_to_menu = True
 
     def marker_display_name(marker_type: str) -> str:
         return "Periapsis" if marker_type == "pericenter" else "Apoapsis"
@@ -874,18 +1284,6 @@ def main():
                 closest_distance = distance
                 closest_type = marker_type
         return closest_type
-
-    def set_scenario(new_key: str) -> None:
-        nonlocal active_scenario_key, scenario_flash_text, scenario_flash_time
-        if new_key not in scenarios_dict:
-            return
-        active_scenario_key = new_key
-        scenario = get_current_scenario()
-        scenario_flash_text = f"{scenario.name} scenario loaded"
-        scenario_flash_time = time.perf_counter()
-        reset()
-        if state == "running":
-            init_run_logging()
 
     def log_state(dt_eff: float) -> None:
         if logger is None:
@@ -944,12 +1342,6 @@ def main():
         impact_logged = False
         escape_logged = False
         log_state(0.0)
-
-    def start_simulation():
-        nonlocal state
-        reset()
-        state = "running"
-        init_run_logging()
 
     def quit_app():
         close_logger()
@@ -1027,49 +1419,6 @@ def main():
         else:
             camera_mode = "earth"
 
-    def load_next_scenario() -> None:
-        nonlocal active_scenario_key, state, paused
-        if not scenario_order:
-            return
-        try:
-            current_index = scenario_order.index(active_scenario_key)
-        except ValueError:
-            current_index = 0
-        next_index = (current_index + 1) % len(scenario_order)
-        previous_state = state
-        set_scenario(scenario_order[next_index])
-        if previous_state == "impact":
-            state = "running"
-            paused = False
-            init_run_logging()
-        elif previous_state != "menu":
-            state = "running"
-
-    def reload_scenarios_for_planet() -> None:
-        """Reload scenarios when the planet changes."""
-        nonlocal scenarios_list, scenarios_dict, scenario_order, active_scenario_key
-        nonlocal scenario_shortcut_map, scenario_help_lines
-        scenarios_list = list(get_scenarios_for_planet(current_planet))
-        scenarios_dict = {s.key: s for s in scenarios_list}
-        scenario_order = [s.key for s in scenarios_list]
-        active_scenario_key = scenario_order[0]
-        scenario_shortcut_map = build_scenario_shortcut_map()
-        scenario_help_lines = build_scenario_help_lines()
-
-    def cycle_planet() -> None:
-        """Cycle to the next planet preset and reset the simulation."""
-        global current_planet, current_planet_index, PIXELS_PER_METER
-        nonlocal ppm_target
-        current_planet_index = (current_planet_index + 1) % len(PLANET_PRESETS)
-        current_planet = get_preset(PLANET_PRESETS[current_planet_index])
-        reload_scenarios_for_planet()
-        # Recalculate zoom level for the new planet
-        PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
-        ppm_target = PIXELS_PER_METER
-        reset()
-        if state == "running":
-            init_run_logging()
-
     def reset_and_continue():
         nonlocal state, paused, impact_info, shock_ring_start
         reset()
@@ -1110,23 +1459,10 @@ def main():
                 else "Camera: Sat" if camera_mode == "satellite" else "Camera: Free"
             ),
         ),
+        Button((20, 20 + 5 * (button_height + button_gap), button_width, button_height), "Menu", go_to_menu),
     ]
 
     update_sim_button_layout()
-
-    def toggle_integrator() -> None:
-        global integrator
-        integrator = "RK4" if integrator == "Euler" else "Euler"
-        print(f"Integrator: {integrator}")
-        update_sim_button_layout()
-    menu_buttons = [
-        Button(
-            (20, 20 + 4 * (button_height + button_gap), button_width, button_height),
-            "Integrator: RK4",
-            toggle_integrator,
-            lambda: f"Integrator: {integrator}",
-        ),
-    ]
 
     def toggle_fullscreen_mode() -> None:
         nonlocal screen, fullscreen_enabled, overlay_size
@@ -1147,599 +1483,547 @@ def main():
             return any(btn.rect.collidepoint(pos) for btn in sim_buttons)
         return False
 
-    # ========= MAIN LOOP =========
+    def setup_simulation_from_selection(selected_planet: Planet, selected_scenario: Scenario) -> None:
+        """Initialize simulation state based on menu selection."""
+        global current_planet, current_planet_index, PIXELS_PER_METER
+        nonlocal scenarios_list, scenarios_dict, scenario_order, active_scenario_key
+        nonlocal r, v, t_sim, paused, ppm, ppm_target, real_time_speed
+        nonlocal grid_overlay_enabled, show_velocity_arrow, camera_mode
+        nonlocal camera_center, camera_target, is_dragging_camera
+        nonlocal orbit_prediction_period, orbit_prediction_points
+        nonlocal orbit_markers, impact_info, shock_ring_start
+        nonlocal impact_freeze_time, impact_overlay_reveal_time, impact_overlay_visible_since
+        nonlocal accumulator, last_time, state, return_to_menu, escape_radius_limit
+        
+        # Update planet
+        current_planet = selected_planet
+        try:
+            current_planet_index = PLANET_PRESETS.index(selected_planet.name.lower())
+        except ValueError:
+            current_planet_index = 0
+        
+        # Update scenarios
+        scenarios_list = list(get_scenarios_for_planet(current_planet))
+        scenarios_dict = {s.key: s for s in scenarios_list}
+        scenario_order = [s.key for s in scenarios_list]
+        active_scenario_key = selected_scenario.key
+        
+        # Update display metrics
+        update_display_metrics(*screen.get_size())
+        PIXELS_PER_METER = compute_pixels_per_meter(WIDTH, HEIGHT)
+        ppm = PIXELS_PER_METER
+        ppm_target = ppm
+        
+        # Reset simulation state
+        r = get_current_r0()
+        v = get_current_velocity()
+        t_sim = 0.0
+        paused = False
+        real_time_speed = REAL_TIME_SPEED
+        grid_overlay_enabled = False
+        show_velocity_arrow = True
+        camera_mode = "earth"
+        camera_center = np.array([0.0, 0.0], dtype=float)
+        camera_target = np.array([0.0, 0.0], dtype=float)
+        is_dragging_camera = False
+        orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(r, v, current_planet.mu)
+        orbit_markers.clear()
+        impact_info = None
+        shock_ring_start = None
+        impact_freeze_time = None
+        impact_overlay_reveal_time = None
+        impact_overlay_visible_since = None
+        accumulator = 0.0
+        last_time = time.perf_counter()
+        state = "running"
+        return_to_menu = False
+        escape_radius_limit = ESCAPE_RADIUS_FACTOR * get_default_r0()
+
+    # ========= OUTER LOOP: MENU -> SIMULATION -> MENU =========
     while True:
-        current_size = screen.get_size()
-        if current_size != overlay_size:
-            overlay_size = current_size
-            update_display_metrics(*current_size)
-            update_sim_button_layout()
-            orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
-            label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
-            grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
+        # Show main menu and get selection
+        menu_result = run_main_menu(screen, clock, current_planet)
+        
+        if menu_result is None:
+            # User quit from menu
+            pygame.quit()
+            sys.exit()
+        
+        selected_planet, selected_scenario = menu_result
+        
+        # Setup simulation based on selection
+        setup_simulation_from_selection(selected_planet, selected_scenario)
+        
+        # Initialize logging for the new run
+        init_run_logging()
 
-        orbit_layer.fill((0, 0, 0, 0))
-        label_layer.fill((0, 0, 0, 0))
-        if grid_overlay_enabled:
-            grid_surface.fill((0, 0, 0, 0))
+        # ========= SIMULATION LOOP =========
+        while True:
+            current_size = screen.get_size()
+            if current_size != overlay_size:
+                overlay_size = current_size
+                update_display_metrics(*current_size)
+                update_sim_button_layout()
+                orbit_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+                label_layer = pygame.Surface(overlay_size, pygame.SRCALPHA)
+                grid_surface = pygame.Surface(overlay_size, pygame.SRCALPHA)
 
-        # --- Input ---
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                quit_app()
+            orbit_layer.fill((0, 0, 0, 0))
+            label_layer.fill((0, 0, 0, 0))
+            if grid_overlay_enabled:
+                grid_surface.fill((0, 0, 0, 0))
 
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+            # --- Input ---
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
                     quit_app()
-                    continue
-                if event.key == pygame.K_F11:
-                    toggle_fullscreen_mode()
-                    continue
-                if event.key in scenario_shortcut_map:
-                    set_scenario(scenario_shortcut_map[event.key])
+
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        go_to_menu()
+                        continue
+                    if event.key == pygame.K_F11:
+                        toggle_fullscreen_mode()
+                        continue
+                    if event.key == pygame.K_g:
+                        grid_overlay_enabled = not grid_overlay_enabled
+                        continue
+                        
                     if state == "impact":
-                        state = "running"
-                        paused = False
-                        init_run_logging()
-                    elif state == "menu":
-                        start_simulation()
-                    continue
-                if event.key == pygame.K_g:
-                    grid_overlay_enabled = not grid_overlay_enabled
-                    continue
+                        if event.key == pygame.K_r:
+                            reset_and_continue()
+                        continue
+                        
+                    if state == "running":
+                        if event.key == pygame.K_SPACE:
+                            paused = not paused
+                        elif event.key == pygame.K_r:
+                            reset_and_continue()
+                        elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
+                            ppm_target = clamp(ppm_target * 1.2, MIN_PPM, MAX_PPM)
+                        elif event.key == pygame.K_MINUS:
+                            ppm_target = clamp(ppm_target / 1.2, MIN_PPM, MAX_PPM)
+                        elif event.key == pygame.K_RIGHT:
+                            real_time_speed = min(real_time_speed * 1.5, 10_000.0)
+                        elif event.key == pygame.K_LEFT:
+                            real_time_speed = max(real_time_speed / 1.5, 0.1)
+                        elif event.key == pygame.K_UP:
+                            real_time_speed = min(real_time_speed * 2.0, 10_000.0)
+                        elif event.key == pygame.K_DOWN:
+                            real_time_speed = max(real_time_speed / 2.0, 0.1)
+                        elif event.key == pygame.K_c:
+                            toggle_camera()
+                        elif event.key == pygame.K_v:
+                            show_velocity_arrow = not show_velocity_arrow
+                            
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1 and state == "running":
+                        if not is_over_button(event.pos):
+                            is_dragging_camera = True
+                            drag_last_pos = event.pos
+                            camera_mode = "manual"
+                            camera_target[:] = camera_center
+                    elif event.button == 4 and state == "running":
+                        ppm_target = clamp(ppm_target * 1.1, MIN_PPM, MAX_PPM)
+                    elif event.button == 5 and state == "running":
+                        ppm_target = clamp(ppm_target / 1.1, MIN_PPM, MAX_PPM)
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    if event.button == 1:
+                        is_dragging_camera = False
+                elif event.type == pygame.MOUSEMOTION:
+                    if is_dragging_camera and state == "running":
+                        dx = event.pos[0] - drag_last_pos[0]
+                        dy = event.pos[1] - drag_last_pos[1]
+                        if dx != 0 or dy != 0:
+                            camera_center[0] -= dx / ppm
+                            camera_center[1] += dy / ppm
+                            camera_target[:] = camera_center
+                            drag_last_pos = event.pos
+                elif event.type == pygame.MOUSEWHEEL:
+                    if state == "running" and event.y != 0:
+                        zoom_factor = 1.1 ** event.y
+                        new_ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
+
+                        if camera_mode == "manual":
+                            # Mouse-centered zoom logic
+                            mx, my = pygame.mouse.get_pos()
+                            w_half = WIDTH / 2.0
+                            h_half = HEIGHT / 2.0
+                            
+                            # 1. Calculate World position under mouse using CURRENT ppm and center
+                            # Formula derived from world_to_screen inversion
+                            m_wx = camera_center[0] + (mx - w_half) / ppm
+                            m_wy = camera_center[1] + (h_half - my) / ppm
+
+                            # 2. Calculate where the camera target MUST be for that World position 
+                            # to project back to the same mouse screen coordinates at the NEW ppm scale.
+                            # mx = w_half + (m_wx - target_cx) * new_ppm_target
+                            target_cx = m_wx - (mx - w_half) / new_ppm_target
+                            
+                            # my = h_half - (m_wy - target_cy) * new_ppm_target (inverted Y)
+                            target_cy = m_wy - (h_half - my) / new_ppm_target
+
+                            camera_target[:] = (target_cx, target_cy)
+                        
+                        ppm_target = new_ppm_target
                 
-                # Menu: Press Space to start
-                if state == "menu":
-                    if event.key == pygame.K_SPACE:
-                        start_simulation()
-                    elif event.key == pygame.K_p:
-                        cycle_planet()
-                    continue
-                    
-                if state == "impact":
-                    if event.key == pygame.K_r:
-                        reset_and_continue()
-                    elif event.key == pygame.K_n:
-                        load_next_scenario()
-                    elif event.key == pygame.K_p:
-                        cycle_planet()
-                        state = "running"
-                        paused = False
-                        init_run_logging()
-                    continue
-                    
                 if state == "running":
-                    if event.key == pygame.K_SPACE:
-                        paused = not paused
-                    elif event.key == pygame.K_r:
-                        reset_and_continue()
-                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS):
-                        ppm_target = clamp(ppm_target * 1.2, MIN_PPM, MAX_PPM)
-                    elif event.key == pygame.K_MINUS:
-                        ppm_target = clamp(ppm_target / 1.2, MIN_PPM, MAX_PPM)
-                    elif event.key == pygame.K_RIGHT:
-                        real_time_speed = min(real_time_speed * 1.5, 10_000.0)
-                    elif event.key == pygame.K_LEFT:
-                        real_time_speed = max(real_time_speed / 1.5, 0.1)
-                    elif event.key == pygame.K_UP:
-                        real_time_speed = min(real_time_speed * 2.0, 10_000.0)
-                    elif event.key == pygame.K_DOWN:
-                        real_time_speed = max(real_time_speed / 2.0, 0.1)
-                    elif event.key == pygame.K_n:
-                        load_next_scenario()
-                    elif event.key == pygame.K_c:
-                        toggle_camera()
-                    elif event.key == pygame.K_v:
-                        show_velocity_arrow = not show_velocity_arrow
-                    elif event.key == pygame.K_p:
-                        cycle_planet()
-                        
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-
-                if state == "menu":
-                    for btn in menu_buttons:
+                    for btn in sim_buttons:
                         btn.handle_event(event)
-                if event.button == 1 and state == "running":
-                    if not is_over_button(event.pos):
-                        is_dragging_camera = True
-                        drag_last_pos = event.pos
-                        camera_mode = "manual"
-                        camera_target[:] = camera_center
-                elif event.button == 4 and state == "running":
-                    ppm_target = clamp(ppm_target * 1.1, MIN_PPM, MAX_PPM)
-                elif event.button == 5 and state == "running":
-                    ppm_target = clamp(ppm_target / 1.1, MIN_PPM, MAX_PPM)
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    is_dragging_camera = False
-            elif event.type == pygame.MOUSEMOTION:
-                if is_dragging_camera and state == "running":
-                    dx = event.pos[0] - drag_last_pos[0]
-                    dy = event.pos[1] - drag_last_pos[1]
-                    if dx != 0 or dy != 0:
-                        camera_center[0] -= dx / ppm
-                        camera_center[1] += dy / ppm
-                        camera_target[:] = camera_center
-                        drag_last_pos = event.pos
-            elif event.type == pygame.MOUSEWHEEL:
-                if state == "running" and event.y != 0:
-                    zoom_factor = 1.1 ** event.y
-                    new_ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
 
-                    if camera_mode == "manual":
-                        # Mouse-centered zoom logic
-                        mx, my = pygame.mouse.get_pos()
-                        w_half = WIDTH / 2.0
-                        h_half = HEIGHT / 2.0
-                        
-                        # 1. Calculate World position under mouse using CURRENT ppm and center
-                        # Formula derived from world_to_screen inversion
-                        m_wx = camera_center[0] + (mx - w_half) / ppm
-                        m_wy = camera_center[1] + (h_half - my) / ppm
+            # Check if we should return to menu
+            if return_to_menu:
+                close_logger()
+                break
 
-                        # 2. Calculate where the camera target MUST be for that World position 
-                        # to project back to the same mouse screen coordinates at the NEW ppm scale.
-                        # mx = w_half + (m_wx - target_cx) * new_ppm_target
-                        target_cx = m_wx - (mx - w_half) / new_ppm_target
-                        
-                        # my = h_half - (m_wy - target_cy) * new_ppm_target (inverted Y)
-                        target_cy = m_wy - (h_half - my) / new_ppm_target
+            # === PHYSICS UPDATE ===
+            now = time.perf_counter()
+            frame_dt_real = now - last_time
+            last_time = now
+            sim_dt_target = frame_dt_real * real_time_speed
+            accumulator += sim_dt_target
 
-                        camera_target[:] = (target_cx, target_cy)
+            if paused:
+                accumulator = 0.0
+
+            time_to_simulate = accumulator if not paused else 0.0
+            if time_to_simulate > 0.0:
+                steps_needed = max(1, math.ceil(time_to_simulate / DT_PHYS))
+                steps_to_run = min(steps_needed, MAX_SUBSTEPS)
+                dt_step = time_to_simulate / steps_to_run
+
+                for _ in range(steps_to_run):
+                    if integrator == "RK4":
+                        r, v = rk4_step(r, v, dt_step, current_planet.mu)
+                    elif integrator == "Euler":
+                        r, v = euler_step(r, v, dt_step, current_planet.mu)
+                    t_sim += dt_step
+                    rmag = float(np.linalg.norm(r))
                     
-                    ppm_target = new_ppm_target
-            
-            if state == "running":
-                for btn in sim_buttons:
-                    btn.handle_event(event)
-            elif event.type == pygame.MOUSEWHEEL:
-                if state == "running" and event.y != 0:
-                    zoom_factor = 1.1 ** event.y
-                    ppm_target = clamp(ppm_target * zoom_factor, MIN_PPM, MAX_PPM)
-            
-            if state == "running":
-                for btn in sim_buttons:
-                    btn.handle_event(event)
-
-        # === MENU STATE ===
-        if state == "menu":
-            screen.fill(BACKGROUND_COLOR)
-            
-            # Title
-            title_text = "SIMULERING AV OMLOPPSBANA"
-            title_surf = title_font.render(title_text, True, HUD_TEXT_COLOR)
-            title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 3))
-            screen.blit(title_surf, title_rect)
-            
-            # Subtitle
-            subtitle_text = "av Axel Jönsson"
-            subtitle_surf = font.render(subtitle_text, True, MENU_SUBTITLE_COLOR)
-            subtitle_rect = subtitle_surf.get_rect(center=(WIDTH // 2, HEIGHT // 3 + 50))
-            screen.blit(subtitle_surf, subtitle_rect)
-            
-            # Current planet display
-            planet_text = f"Planet: {current_planet.name}"
-            planet_surf = font.render(planet_text, True, HUD_TEXT_COLOR)
-            planet_rect = planet_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2))
-            screen.blit(planet_surf, planet_rect)
-            
-            # Press Space prompt
-            prompt_text = "Press SPACE to start  |  P to change planet"
-            prompt_surf = font.render(prompt_text, True, HUD_TEXT_COLOR)
-            prompt_rect = prompt_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
-            screen.blit(prompt_surf, prompt_rect)
-
-            mouse_pos = pygame.mouse.get_pos()
-            for btn in menu_buttons:
-                btn.draw(screen, font, mouse_pos)
-            
-            # Scenario panel
-            panel_lines = [scenario_panel_title, *scenario_help_lines]
-            panel_padding = 14
-            line_height = scenario_font.get_linesize()
-            panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
-            panel_height = line_height * len(panel_lines) + panel_padding * 2
-            panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-            pygame.draw.rect(
-                panel_surface,
-                LABEL_BACKGROUND_COLOR,
-                panel_surface.get_rect(),
-                border_radius=12,
-            )
-            y = panel_padding
-            for idx, line in enumerate(panel_lines):
-                if idx == 0:
-                    color = HUD_TEXT_COLOR
-                else:
-                    sc_key = scenario_order[idx - 1] if idx - 1 < len(scenario_order) else ""
-                    color = HUD_TEXT_COLOR if sc_key == active_scenario_key else MENU_SUBTITLE_COLOR
-                text_surf = scenario_font.render(line, True, color)
-                panel_surface.blit(text_surf, (panel_padding, y))
-                y += line_height
-            panel_rect = panel_surface.get_rect()
-            panel_rect.topleft = (20, HEIGHT - panel_height - 20)
-            screen.blit(panel_surface, panel_rect)
-            
-            # FPS
-            fps_value = clock.get_fps()
-            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, (140, 180, 220))
-            fps_rect = fps_text.get_rect(bottomright=(WIDTH - 10, HEIGHT - 10))
-            screen.blit(fps_text, fps_rect)
-            
-            pygame.display.flip()
-            clock.tick(60)
-            continue
-
-        # === PHYSICS UPDATE ===
-        now = time.perf_counter()
-        frame_dt_real = now - last_time
-        last_time = now
-        sim_dt_target = frame_dt_real * real_time_speed
-        accumulator += sim_dt_target
-
-        if paused:
-            accumulator = 0.0
-
-        time_to_simulate = accumulator if not paused else 0.0
-        if time_to_simulate > 0.0:
-            steps_needed = max(1, math.ceil(time_to_simulate / DT_PHYS))
-            steps_to_run = min(steps_needed, MAX_SUBSTEPS)
-            dt_step = time_to_simulate / steps_to_run
-
-            for _ in range(steps_to_run):
-                if integrator == "RK4":
-                    r, v = rk4_step(r, v, dt_step, current_planet.mu)
-                elif integrator == "Euler":
-                    r, v = euler_step(r, v, dt_step, current_planet.mu)
-                t_sim += dt_step
-                rmag = float(np.linalg.norm(r))
-                
-                event_type: str | None = None
-                prev_radius = prev_r
-                dr = None
-                if prev_radius is not None:
-                    dr = rmag - prev_radius
-                    if prev_dr is not None:
-                        if prev_dr < 0.0 and dr >= 0.0:
-                            event_type = "pericenter"
-                        elif prev_dr > 0.0 and dr <= 0.0:
-                            event_type = "apocenter"
-                prev_dr = dr
-                prev_r = rmag
-
-                if event_type is not None:
-                    orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
-
-                vmag = float(np.linalg.norm(v))
-                eps = float(energy_specific(r, v, current_planet.mu))
-                e_val = float(eccentricity(r, v, current_planet.mu))
-                impact_triggered = not impact_logged and rmag <= current_planet.radius
-
-                if logger is not None:
-                    log_step_counter += 1
+                    event_type: str | None = None
+                    prev_radius = prev_r
+                    dr = None
+                    if prev_radius is not None:
+                        dr = rmag - prev_radius
+                        if prev_dr is not None:
+                            if prev_dr < 0.0 and dr >= 0.0:
+                                event_type = "pericenter"
+                            elif prev_dr > 0.0 and dr <= 0.0:
+                                event_type = "apocenter"
+                    prev_dr = dr
+                    prev_r = rmag
 
                     if event_type is not None:
-                        import json
-                        logger.log_event([
-                            float(t_sim),
-                            event_type,
-                            rmag,
-                            vmag,
-                            json.dumps({"ecc": e_val, "energy": eps}),
-                        ])
+                        orbit_markers.append((event_type, float(r[0]), float(r[1]), rmag))
+
+                    vmag = float(np.linalg.norm(v))
+                    eps = float(energy_specific(r, v, current_planet.mu))
+                    e_val = float(eccentricity(r, v, current_planet.mu))
+                    impact_triggered = not impact_logged and rmag <= current_planet.radius
+
+                    if logger is not None:
+                        log_step_counter += 1
+
+                        if event_type is not None:
+                            import json
+                            logger.log_event([
+                                float(t_sim),
+                                event_type,
+                                rmag,
+                                vmag,
+                                json.dumps({"ecc": e_val, "energy": eps}),
+                            ])
+
+                        if impact_triggered:
+                            import json
+                            logger.log_event([
+                                float(t_sim),
+                                "impact",
+                                rmag,
+                                vmag,
+                                json.dumps({"penetration": current_planet.radius - rmag, "energy": eps}),
+                            ])
+
+                        if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
+                            import json
+                            logger.log_event([
+                                float(t_sim),
+                                "escape",
+                                rmag,
+                                vmag,
+                                json.dumps({"energy": eps, "ecc": e_val}),
+                            ])
+                            escape_logged = True
+
+                        if log_step_counter >= LOG_EVERY_STEPS or event_type is not None or impact_triggered:
+                            log_state(dt_step)
+                            log_step_counter = 0
 
                     if impact_triggered:
-                        import json
-                        logger.log_event([
-                            float(t_sim),
-                            "impact",
-                            rmag,
-                            vmag,
-                            json.dumps({"penetration": current_planet.radius - rmag, "energy": eps}),
-                        ])
+                        impact_logged = True
+                        if impact_info is None:
+                            normal = r / max(rmag, 1e-9)
+                            tangent = np.array([-normal[1], normal[0]])
+                            tangential_speed = float(np.dot(v, tangent))
+                            radial_speed = float(np.dot(v, normal))
+                            angle_rad = math.atan2(abs(radial_speed), abs(tangential_speed))
+                            impact_info = {
+                                "time": float(t_sim),
+                                "speed": vmag,
+                                "angle": math.degrees(angle_rad),
+                                "radial_speed": radial_speed,
+                                "tangential_speed": tangential_speed,
+                                "position": (float(r[0]), float(r[1])),
+                            }
+                            shock_ring_start = time.perf_counter()
+                            impact_freeze_time = shock_ring_start + IMPACT_FREEZE_DELAY
+                            impact_overlay_reveal_time = shock_ring_start + IMPACT_OVERLAY_DELAY
+                            impact_overlay_visible_since = None
+                            paused = True
+                            state = "impact"
+                            accumulator = 0.0
+                            break
 
-                    if not escape_logged and eps > 0.0 and rmag > escape_radius_limit:
-                        import json
-                        logger.log_event([
-                            float(t_sim),
-                            "escape",
-                            rmag,
-                            vmag,
-                            json.dumps({"energy": eps, "ecc": e_val}),
-                        ])
-                        escape_logged = True
+                accumulator = 0.0
 
-                    if log_step_counter >= LOG_EVERY_STEPS or event_type is not None or impact_triggered:
-                        log_state(dt_step)
-                        log_step_counter = 0
+            now_time = time.perf_counter()
+            
+            # Smooth zoom
+            ppm += (ppm_target - ppm) * 0.1
+            ppm = clamp(ppm, MIN_PPM, MAX_PPM)
 
-                if impact_triggered:
-                    impact_logged = True
-                    if impact_info is None:
-                        normal = r / max(rmag, 1e-9)
-                        tangent = np.array([-normal[1], normal[0]])
-                        tangential_speed = float(np.dot(v, tangent))
-                        radial_speed = float(np.dot(v, normal))
-                        angle_rad = math.atan2(abs(radial_speed), abs(tangential_speed))
-                        impact_info = {
-                            "time": float(t_sim),
-                            "speed": vmag,
-                            "angle": math.degrees(angle_rad),
-                            "radial_speed": radial_speed,
-                            "tangential_speed": tangential_speed,
-                            "position": (float(r[0]), float(r[1])),
-                        }
-                        shock_ring_start = time.perf_counter()
-                        impact_freeze_time = shock_ring_start + IMPACT_FREEZE_DELAY
-                        impact_overlay_reveal_time = shock_ring_start + IMPACT_OVERLAY_DELAY
-                        impact_overlay_visible_since = None
-                        paused = True
-                        state = "impact"
-                        accumulator = 0.0
-                        break
-
-            accumulator = 0.0
-
-        now_time = time.perf_counter()
-        
-        # Smooth zoom
-        ppm += (ppm_target - ppm) * 0.1
-        ppm = clamp(ppm, MIN_PPM, MAX_PPM)
-
-        # Camera targets
-        if camera_mode == "earth":
-            view_offset = (HEIGHT * 0.08) / max(ppm, 1e-6)
-            camera_target[:] = (0.0, view_offset)
-        elif camera_mode == "satellite":
-            camera_target[:] = (r[0], r[1])
-        else:
-            # Manual mode
-            # Only lock target to center if dragging.
-            # Otherwise, allow camera_target to differ (e.g. set by zoom logic)
-            if is_dragging_camera:
-                camera_target[:] = camera_center
-        
-        camera_center += (camera_target - camera_center) * 0.1
-
-        # === RENDER ===
-        screen.fill(BACKGROUND_COLOR)
-
-        camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
-        if grid_overlay_enabled:
-            draw_coordinate_grid(
-                grid_surface,
-                ppm,
-                camera_center_tuple,
-                tick_font=grid_label_font,
-                axis_font=grid_axis_font,
-            )
-            screen.blit(grid_surface, (0, 0))
-
-        mouse_pos = pygame.mouse.get_pos()
-        rmag = float(np.linalg.norm(r))
-        planet_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
-
-        # Draw predicted orbit
-        if orbit_prediction_points:
-            if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
-                reveal_fraction = 1.0
+            # Camera targets
+            if camera_mode == "earth":
+                view_offset = (HEIGHT * 0.08) / max(ppm, 1e-6)
+                camera_target[:] = (0.0, view_offset)
+            elif camera_mode == "satellite":
+                camera_target[:] = (r[0], r[1])
             else:
-                reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
-            total_points = len(orbit_prediction_points)
-            if reveal_fraction >= 1.0:
-                subset = orbit_prediction_points
-            else:
-                max_index = max(2, int(total_points * reveal_fraction))
-                subset = orbit_prediction_points[:max_index]
-            sampled_points = downsample_points(subset, MAX_RENDERED_ORBIT_POINTS)
-            screen_points = [
-                world_to_screen(px, py, ppm, camera_center_tuple)
-                for px, py in sampled_points
-            ]
-            if len(screen_points) >= 2:
-                draw_orbit_line(orbit_layer, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
-                screen.blit(orbit_layer, (0, 0))
+                # Manual mode
+                # Only lock target to center if dragging.
+                # Otherwise, allow camera_target to differ (e.g. set by zoom logic)
+                if is_dragging_camera:
+                    camera_target[:] = camera_center
+            
+            camera_center += (camera_target - camera_center) * 0.1
 
-        planet_radius_px = max(1, int(current_planet.radius * ppm))
-        draw_planet(screen, current_planet, planet_screen_pos, planet_radius_px)
+            # === RENDER ===
+            screen.fill(BACKGROUND_COLOR)
 
-        # Shock ring on impact
-        if impact_info is not None and shock_ring_start is not None:
-            elapsed_ring = now_time - shock_ring_start
-            if elapsed_ring <= SHOCK_RING_DURATION:
-                progress = clamp(elapsed_ring / SHOCK_RING_DURATION, 0.0, 1.0)
-                impact_position = impact_info.get("position")
-                if impact_position is not None:
-                    ring_center = world_to_screen(
-                        impact_position[0], impact_position[1], ppm, camera_center_tuple
-                    )
+            camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
+            if grid_overlay_enabled:
+                draw_coordinate_grid(
+                    grid_surface,
+                    ppm,
+                    camera_center_tuple,
+                    tick_font=grid_label_font,
+                    axis_font=grid_axis_font,
+                )
+                screen.blit(grid_surface, (0, 0))
+
+            mouse_pos = pygame.mouse.get_pos()
+            rmag = float(np.linalg.norm(r))
+            planet_screen_pos = world_to_screen(0.0, 0.0, ppm, camera_center_tuple)
+
+            # Draw predicted orbit
+            if orbit_prediction_points:
+                if orbit_prediction_period is None or orbit_prediction_period <= 0.0:
+                    reveal_fraction = 1.0
                 else:
-                    ring_center = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
-                base_ring_radius = max(4, compute_satellite_radius(current_planet.radius) * 2)
-                ring_radius_px = max(
-                    base_ring_radius,
-                    int(base_ring_radius + planet_radius_px * SHOCK_RING_EXPANSION_FACTOR * progress),
-                )
-                ring_alpha = int(255 * (1.0 - progress))
-                if ring_alpha > 0 and ring_radius_px > 0:
-                    ring_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-                    ring_width = max(1, min(SHOCK_RING_WIDTH, ring_radius_px))
-                    pygame.draw.circle(
-                        ring_surface,
-                        (*SHOCK_RING_COLOR, ring_alpha),
-                        ring_center,
-                        ring_radius_px,
-                        ring_width,
+                    reveal_fraction = clamp(t_sim / orbit_prediction_period, 0.0, 1.0)
+                total_points = len(orbit_prediction_points)
+                if reveal_fraction >= 1.0:
+                    subset = orbit_prediction_points
+                else:
+                    max_index = max(2, int(total_points * reveal_fraction))
+                    subset = orbit_prediction_points[:max_index]
+                sampled_points = downsample_points(subset, MAX_RENDERED_ORBIT_POINTS)
+                screen_points = [
+                    world_to_screen(px, py, ppm, camera_center_tuple)
+                    for px, py in sampled_points
+                ]
+                if len(screen_points) >= 2:
+                    draw_orbit_line(orbit_layer, ORBIT_PRIMARY_COLOR, screen_points, ORBIT_LINE_WIDTH)
+                    screen.blit(orbit_layer, (0, 0))
+
+            planet_radius_px = max(1, int(current_planet.radius * ppm))
+            draw_planet(screen, current_planet, planet_screen_pos, planet_radius_px)
+
+            # Shock ring on impact
+            if impact_info is not None and shock_ring_start is not None:
+                elapsed_ring = now_time - shock_ring_start
+                if elapsed_ring <= SHOCK_RING_DURATION:
+                    progress = clamp(elapsed_ring / SHOCK_RING_DURATION, 0.0, 1.0)
+                    impact_position = impact_info.get("position")
+                    if impact_position is not None:
+                        ring_center = world_to_screen(
+                            impact_position[0], impact_position[1], ppm, camera_center_tuple
+                        )
+                    else:
+                        ring_center = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
+                    base_ring_radius = max(4, compute_satellite_radius(current_planet.radius) * 2)
+                    ring_radius_px = max(
+                        base_ring_radius,
+                        int(base_ring_radius + planet_radius_px * SHOCK_RING_EXPANSION_FACTOR * progress),
                     )
-                    screen.blit(ring_surface, (0, 0))
+                    ring_alpha = int(255 * (1.0 - progress))
+                    if ring_alpha > 0 and ring_radius_px > 0:
+                        ring_surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+                        ring_width = max(1, min(SHOCK_RING_WIDTH, ring_radius_px))
+                        pygame.draw.circle(
+                            ring_surface,
+                            (*SHOCK_RING_COLOR, ring_alpha),
+                            ring_center,
+                            ring_radius_px,
+                            ring_width,
+                        )
+                        screen.blit(ring_surface, (0, 0))
 
-        # Draw satellite
-        sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
-        sat_radius_px = compute_satellite_radius(rmag)
-        draw_satellite(screen, sat_pos, sat_radius_px)
+            # Draw satellite
+            sat_pos = world_to_screen(r[0], r[1], ppm, camera_center_tuple)
+            sat_radius_px = compute_satellite_radius(rmag)
+            draw_satellite(screen, sat_pos, sat_radius_px)
 
-        # Velocity arrow
-        if show_velocity_arrow:
-            vx, vy = float(v[0]), float(v[1])
-            vmag = math.hypot(vx, vy)
-            if vmag > 1e-6:
-                arrow_length = clamp(
-                    vmag * VEL_ARROW_SCALE,
-                    VEL_ARROW_MIN_PIXELS,
-                    VEL_ARROW_MAX_PIXELS,
-                )
-                if arrow_length > 4.0:
-                    dir_x = vx / vmag
-                    dir_y = vy / vmag
-                    arrow_end = (
-                        int(round(sat_pos[0] + dir_x * arrow_length)),
-                        int(round(sat_pos[1] - dir_y * arrow_length)),
+            # Velocity arrow
+            if show_velocity_arrow:
+                vx, vy = float(v[0]), float(v[1])
+                vmag = math.hypot(vx, vy)
+                if vmag > 1e-6:
+                    arrow_length = clamp(
+                        vmag * VEL_ARROW_SCALE,
+                        VEL_ARROW_MIN_PIXELS,
+                        VEL_ARROW_MAX_PIXELS,
                     )
-                    head_length = int(max(4, min(VEL_ARROW_HEAD_LENGTH, arrow_length * 0.6)))
-                    draw_velocity_arrow(screen, sat_pos, arrow_end, head_length, VEL_ARROW_HEAD_ANGLE_DEG)
+                    if arrow_length > 4.0:
+                        dir_x = vx / vmag
+                        dir_y = vy / vmag
+                        arrow_end = (
+                            int(round(sat_pos[0] + dir_x * arrow_length)),
+                            int(round(sat_pos[1] - dir_y * arrow_length)),
+                        )
+                        head_length = int(max(4, min(VEL_ARROW_HEAD_LENGTH, arrow_length * 0.6)))
+                        draw_velocity_arrow(screen, sat_pos, arrow_end, head_length, VEL_ARROW_HEAD_ANGLE_DEG)
 
-        # Draw orbit markers
-        hovered_marker: tuple[str, tuple[int, int], float] | None = None
-        if orbit_markers:
-            markers_snapshot = list(orbit_markers)
-            latest_index: dict[str, int] = {}
-            for idx, (marker_type, _, _, _) in enumerate(markers_snapshot):
-                latest_index[marker_type] = idx
-            for idx, (marker_type, mx, my, mr) in enumerate(markers_snapshot):
-                marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
-                dist_to_mouse = math.hypot(marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1])
-                hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
-                alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
-                radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
-                draw_marker_pin(
-                    label_layer,
-                    marker_pos,
-                    color=LABEL_MARKER_COLOR,
-                    alpha=alpha,
-                    orientation=marker_type,
-                )
-                pygame.draw.circle(label_layer, (*LABEL_MARKER_COLOR, alpha), marker_pos, radius)
-                if hovered:
-                    hovered_marker = (marker_type, marker_pos, mr)
-                    pygame.draw.circle(
-                        label_layer, (*LABEL_MARKER_COLOR, int(alpha * 0.4)), marker_pos, radius + 4, 1
+            # Draw orbit markers
+            hovered_marker: tuple[str, tuple[int, int], float] | None = None
+            if orbit_markers:
+                markers_snapshot = list(orbit_markers)
+                latest_index: dict[str, int] = {}
+                for idx, (marker_type, _, _, _) in enumerate(markers_snapshot):
+                    latest_index[marker_type] = idx
+                for idx, (marker_type, mx, my, mr) in enumerate(markers_snapshot):
+                    marker_pos = world_to_screen(mx, my, ppm, camera_center_tuple)
+                    dist_to_mouse = math.hypot(marker_pos[0] - mouse_pos[0], marker_pos[1] - mouse_pos[1])
+                    hovered = dist_to_mouse <= LABEL_MARKER_HOVER_RADIUS
+                    alpha = LABEL_MARKER_HOVER_ALPHA if hovered else LABEL_MARKER_ALPHA
+                    radius = LABEL_MARKER_HOVER_RADIUS_PIXELS if hovered else 4
+                    draw_marker_pin(
+                        label_layer,
+                        marker_pos,
+                        color=LABEL_MARKER_COLOR,
+                        alpha=alpha,
+                        orientation=marker_type,
                     )
-            screen.blit(label_layer, (0, 0))
+                    pygame.draw.circle(label_layer, (*LABEL_MARKER_COLOR, alpha), marker_pos, radius)
+                    if hovered:
+                        hovered_marker = (marker_type, marker_pos, mr)
+                        pygame.draw.circle(
+                            label_layer, (*LABEL_MARKER_COLOR, int(alpha * 0.4)), marker_pos, radius + 4, 1
+                        )
+                screen.blit(label_layer, (0, 0))
 
-        if hovered_marker is not None:
-            render_marker_label(screen, hovered_marker[0], hovered_marker[1], hovered_marker[2])
+            if hovered_marker is not None:
+                render_marker_label(screen, hovered_marker[0], hovered_marker[1], hovered_marker[2])
 
-        # HUD
-        vmag = float(np.linalg.norm(v))
-        eps = energy_specific(r, v, current_planet.mu)
-        e = eccentricity(r, v, current_planet.mu)
-        altitude_km = (rmag - current_planet.radius) / 1_000.0
-        scenario = get_current_scenario()
-        hud_entries = [
-            f"Planet: {current_planet.name}",
-            f"Scenario: {scenario.name}",
-            f"Integrator: {integrator}",
-            f"t {t_sim:,.0f} s   ×{real_time_speed:.1f}",
-            f"alt {altitude_km:,.1f} km",
-            f"|v| {vmag:,.1f} m/s   e {e:.3f}",
-            f"ε {eps: .2e} J/kg",
-        ]
-        padding_x = 16
-        padding_y = 14
-        line_height = font.get_linesize()
-        hud_width = max(font.size(line)[0] for line in hud_entries) + padding_x * 2
-        hud_height = line_height * len(hud_entries) + padding_y
-        hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
-        pygame.draw.rect(hud_surface, LABEL_BACKGROUND_COLOR, hud_surface.get_rect(), border_radius=14)
-        for index, line in enumerate(hud_entries):
-            text_surf = font.render(line, True, HUD_TEXT_COLOR)
-            hud_surface.blit(text_surf, (padding_x, int(padding_y / 2) + index * line_height))
-        screen.blit(hud_surface, (20, 20))
-
-        # Sim buttons
-        for btn in sim_buttons:
-            btn.draw(screen, font, mouse_pos)
-
-        # Scenario panel
-        panel_lines = [scenario_panel_title, *scenario_help_lines]
-        panel_padding = 14
-        line_height = scenario_font.get_linesize()
-        panel_width = max(scenario_font.size(line)[0] for line in panel_lines) + panel_padding * 2
-        panel_height = line_height * len(panel_lines) + panel_padding * 2
-        panel_surface = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-        pygame.draw.rect(panel_surface, LABEL_BACKGROUND_COLOR, panel_surface.get_rect(), border_radius=12)
-        y = panel_padding
-        for idx, line in enumerate(panel_lines):
-            if idx == 0:
-                color = HUD_TEXT_COLOR
-            else:
-                sc_key = scenario_order[idx - 1] if idx - 1 < len(scenario_order) else ""
-                color = HUD_TEXT_COLOR if sc_key == active_scenario_key else MENU_SUBTITLE_COLOR
-            text_surf = scenario_font.render(line, True, color)
-            panel_surface.blit(text_surf, (panel_padding, y))
-            y += line_height
-        panel_rect = panel_surface.get_rect()
-        panel_rect.topleft = (20, HEIGHT - panel_height - 20)
-        screen.blit(panel_surface, panel_rect)
-
-        # Impact overlay
-        overlay_alpha_factor = 0.0
-        overlay_should_draw = False
-        if impact_info is not None and state == "impact":
-            if impact_overlay_reveal_time is None or now_time >= impact_overlay_reveal_time:
-                if impact_overlay_visible_since is None:
-                    impact_overlay_visible_since = now_time
-                fade_elapsed = now_time - impact_overlay_visible_since
-                fade_duration = max(IMPACT_OVERLAY_FADE_DURATION, 1e-6)
-                overlay_alpha_factor = clamp(fade_elapsed / fade_duration, 0.0, 1.0)
-                overlay_should_draw = True
-
-        if overlay_should_draw and impact_info is not None:
-            impact_time_value = impact_info.get("time", 0.0)
-            impact_speed_value = impact_info.get("speed", 0.0)
-            impact_angle_value = impact_info.get("angle", 0.0)
-            overlay_lines = [
-                ("IMPACT DETECTED", IMPACT_TITLE_COLOR),
-                (f"t = {impact_time_value:,.2f} s", IMPACT_TEXT_COLOR),
-                (f"|v| = {impact_speed_value:,.1f} m/s", IMPACT_TEXT_COLOR),
-                (f"Impact angle = {impact_angle_value:.1f}° from horizon", IMPACT_TEXT_COLOR),
-                ("", IMPACT_TEXT_COLOR),
-                ("Press R to reset scenario", IMPACT_TEXT_COLOR),
-                ("Press N to load next scenario", IMPACT_TEXT_COLOR),
+            # HUD
+            vmag = float(np.linalg.norm(v))
+            eps = energy_specific(r, v, current_planet.mu)
+            e = eccentricity(r, v, current_planet.mu)
+            altitude_km = (rmag - current_planet.radius) / 1_000.0
+            scenario = get_current_scenario()
+            hud_entries = [
+                f"Planet: {current_planet.name}",
+                f"Scenario: {scenario.name}",
+                f"Integrator: {integrator}",
+                f"t {t_sim:,.0f} s   x{real_time_speed:.1f}",
+                f"alt {altitude_km:,.1f} km",
+                f"|v| {vmag:,.1f} m/s   e {e:.3f}",
+                f"e {eps: .2e} J/kg",
             ]
-            overlay_padding_x = 24
-            overlay_padding_y = 18
+            padding_x = 16
+            padding_y = 14
             line_height = font.get_linesize()
-            overlay_width = max(font.size(text)[0] for text, _ in overlay_lines) + overlay_padding_x * 2
-            overlay_height = line_height * len(overlay_lines) + overlay_padding_y * 2
-            overlay_surface = pygame.Surface((overlay_width, overlay_height), pygame.SRCALPHA)
-            pygame.draw.rect(overlay_surface, IMPACT_OVERLAY_COLOR, overlay_surface.get_rect(), border_radius=18)
-            for idx, (text, color) in enumerate(overlay_lines):
-                if not text:
-                    continue
-                text_surf = font.render(text, True, color)
-                overlay_surface.blit(text_surf, (overlay_padding_x, overlay_padding_y + idx * line_height))
-            if overlay_alpha_factor < 1.0:
-                overlay_surface.set_alpha(int(255 * overlay_alpha_factor))
-            overlay_rect = overlay_surface.get_rect()
-            overlay_rect.center = (WIDTH // 2, HEIGHT // 2)
-            screen.blit(overlay_surface, overlay_rect)
+            hud_width = max(font.size(line)[0] for line in hud_entries) + padding_x * 2
+            hud_height = line_height * len(hud_entries) + padding_y
+            hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
+            pygame.draw.rect(hud_surface, LABEL_BACKGROUND_COLOR, hud_surface.get_rect(), border_radius=14)
+            for index, line in enumerate(hud_entries):
+                text_surf = font.render(line, True, HUD_TEXT_COLOR)
+                hud_surface.blit(text_surf, (padding_x, int(padding_y / 2) + index * line_height))
+            screen.blit(hud_surface, (20, 20))
 
-        # Scenario flash
-        if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
-            flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
-            flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
-            screen.blit(flash_surf, flash_rect)
+            # Sim buttons
+            for btn in sim_buttons:
+                btn.draw(screen, font, mouse_pos)
 
-        # FPS
-        fps_value = clock.get_fps()
-        fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
-        fps_text.set_alpha(FPS_TEXT_ALPHA)
-        fps_rect = fps_text.get_rect(bottomright=(WIDTH - 16, HEIGHT - 16))
-        screen.blit(fps_text, fps_rect)
+            # Impact overlay
+            overlay_alpha_factor = 0.0
+            overlay_should_draw = False
+            if impact_info is not None and state == "impact":
+                if impact_overlay_reveal_time is None or now_time >= impact_overlay_reveal_time:
+                    if impact_overlay_visible_since is None:
+                        impact_overlay_visible_since = now_time
+                    fade_elapsed = now_time - impact_overlay_visible_since
+                    fade_duration = max(IMPACT_OVERLAY_FADE_DURATION, 1e-6)
+                    overlay_alpha_factor = clamp(fade_elapsed / fade_duration, 0.0, 1.0)
+                    overlay_should_draw = True
 
-        pygame.display.flip()
-        clock.tick()
+            if overlay_should_draw and impact_info is not None:
+                impact_time_value = impact_info.get("time", 0.0)
+                impact_speed_value = impact_info.get("speed", 0.0)
+                impact_angle_value = impact_info.get("angle", 0.0)
+                overlay_lines = [
+                    ("IMPACT DETECTED", IMPACT_TITLE_COLOR),
+                    (f"t = {impact_time_value:,.2f} s", IMPACT_TEXT_COLOR),
+                    (f"|v| = {impact_speed_value:,.1f} m/s", IMPACT_TEXT_COLOR),
+                    (f"Impact angle = {impact_angle_value:.1f} deg from horizon", IMPACT_TEXT_COLOR),
+                    ("", IMPACT_TEXT_COLOR),
+                    ("Press R to reset scenario", IMPACT_TEXT_COLOR),
+                    ("Press ESC for main menu", IMPACT_TEXT_COLOR),
+                ]
+                overlay_padding_x = 24
+                overlay_padding_y = 18
+                line_height = font.get_linesize()
+                overlay_width = max(font.size(text)[0] for text, _ in overlay_lines) + overlay_padding_x * 2
+                overlay_height = line_height * len(overlay_lines) + overlay_padding_y * 2
+                overlay_surface = pygame.Surface((overlay_width, overlay_height), pygame.SRCALPHA)
+                pygame.draw.rect(overlay_surface, IMPACT_OVERLAY_COLOR, overlay_surface.get_rect(), border_radius=18)
+                for idx, (text, color) in enumerate(overlay_lines):
+                    if not text:
+                        continue
+                    text_surf = font.render(text, True, color)
+                    overlay_surface.blit(text_surf, (overlay_padding_x, overlay_padding_y + idx * line_height))
+                if overlay_alpha_factor < 1.0:
+                    overlay_surface.set_alpha(int(255 * overlay_alpha_factor))
+                overlay_rect = overlay_surface.get_rect()
+                overlay_rect.center = (WIDTH // 2, HEIGHT // 2)
+                screen.blit(overlay_surface, overlay_rect)
+
+            # Scenario flash
+            if scenario_flash_text and now_time - scenario_flash_time < SCENARIO_FLASH_DURATION:
+                flash_surf = scenario_font.render(scenario_flash_text, True, HUD_TEXT_COLOR)
+                flash_rect = flash_surf.get_rect(center=(WIDTH // 2, 40))
+                screen.blit(flash_surf, flash_rect)
+
+            # FPS
+            fps_value = clock.get_fps()
+            fps_text = font_fps.render(f"FPS: {fps_value:.1f}", True, HUD_TEXT_COLOR)
+            fps_text.set_alpha(FPS_TEXT_ALPHA)
+            fps_rect = fps_text.get_rect(bottomright=(WIDTH - 16, HEIGHT - 16))
+            screen.blit(fps_text, fps_rect)
+
+            pygame.display.flip()
+            clock.tick()
 
 
 if __name__ == "__main__":

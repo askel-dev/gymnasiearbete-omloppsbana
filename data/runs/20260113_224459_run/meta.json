@@ -1,0 +1,24 @@
+{
+  "G": 6.674e-11,
+  "M": 7.342e+22,
+  "R0": [
+    1937000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    1633.0
+  ],
+  "code_version": "v1.5",
+  "dt_phys": 0.25,
+  "integrator": "RK4",
+  "log_strategy": "every_20_steps",
+  "mu": 4900050799999.999,
+  "planet_name": "Moon",
+  "planet_radius": 1737400,
+  "scenario_description": "Low lunar orbit (~1.6 km/s prograde).",
+  "scenario_key": "llo",
+  "scenario_name": "Low Lunar Orbit",
+  "start_speed": 240.0,
+  "v0": 1633.0
+}

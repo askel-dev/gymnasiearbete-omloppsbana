@@ -1,0 +1,24 @@
+{
+  "G": 6.674e-11,
+  "M": 5.683e+26,
+  "R0": [
+    64000000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    24300.0
+  ],
+  "code_version": "v1.5",
+  "dt_phys": 0.25,
+  "integrator": "RK4",
+  "log_strategy": "every_20_steps",
+  "mu": 3.7928342e+16,
+  "planet_name": "Saturn",
+  "planet_radius": 58232000,
+  "scenario_description": "Low Saturn orbit (~24 km/s prograde).",
+  "scenario_key": "lso",
+  "scenario_name": "Low Saturn Orbit",
+  "start_speed": 240.0,
+  "v0": 24300.0
+}

@@ -1,0 +1,24 @@
+{
+  "G": 6.674e-11,
+  "M": 1.024e+26,
+  "R0": [
+    27000000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    28140.0
+  ],
+  "code_version": "v1.5",
+  "dt_phys": 0.25,
+  "integrator": "RK4",
+  "log_strategy": "every_20_steps",
+  "mu": 6834175999999999.0,
+  "planet_name": "Neptune",
+  "planet_radius": 24622000,
+  "scenario_description": "Near escape threshold (~28 km/s).",
+  "scenario_key": "parabolic",
+  "scenario_name": "Parabolic",
+  "start_speed": 240.0,
+  "v0": 28140.0
+}

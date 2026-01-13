@@ -1,0 +1,24 @@
+{
+  "G": 6.674e-11,
+  "M": 8.932e+22,
+  "R0": [
+    2000000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    2440.0
+  ],
+  "code_version": "v1.5",
+  "dt_phys": 0.25,
+  "integrator": "RK4",
+  "log_strategy": "every_20_steps",
+  "mu": 5961216800000.0,
+  "planet_name": "Io",
+  "planet_radius": 1821600,
+  "scenario_description": "Near escape threshold (~2.4 km/s).",
+  "scenario_key": "parabolic",
+  "scenario_name": "Parabolic",
+  "start_speed": 240.0,
+  "v0": 2440.0
+}

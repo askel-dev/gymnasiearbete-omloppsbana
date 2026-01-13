@@ -1,0 +1,24 @@
+{
+  "G": 6.674e-11,
+  "M": 5.972e+24,
+  "R0": [
+    7000000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    11500.0
+  ],
+  "code_version": "v1.5",
+  "dt_phys": 0.25,
+  "integrator": "RK4",
+  "log_strategy": "every_20_steps",
+  "mu": 398571280000000.0,
+  "planet_name": "Earth",
+  "planet_radius": 6371000,
+  "scenario_description": "Exceeds escape velocity (~11.5 km/s).",
+  "scenario_key": "escape",
+  "scenario_name": "Escape",
+  "start_speed": 240.0,
+  "v0": 11500.0
+}
