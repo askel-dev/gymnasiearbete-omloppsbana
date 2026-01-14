@@ -718,7 +718,7 @@ PRESET_PLANETS: dict[str, Planet] = {
     "neptune": Planet(
         name="Neptune",
         planet_type=PlanetType.ICE_GIANT,
-        radius=24_622_000,          # 24,622 km
+        radius=24_764_000,          # 24,764 km
         mass=1.024e26,              # kg
         base_colors=(
             (65, 105, 225),         # Royal blue

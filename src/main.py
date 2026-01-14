@@ -59,12 +59,17 @@ def generate_default_scenarios(planet: Planet) -> tuple[Scenario, ...]:
     Uses orbital mechanics formulas to calculate appropriate velocities:
     - Circular orbit: v = sqrt(mu / r)
     - Escape velocity: v = sqrt(2 * mu / r)
+    - Elliptical orbit at periapsis: v = sqrt(mu * (1 + e) / r)
     """
     # Start 10% above the planet's surface
     r0 = planet.radius * 1.1
     
     v_circular = math.sqrt(planet.mu / r0)
     v_escape = math.sqrt(2 * planet.mu / r0)
+    
+    # Highly elliptical orbit (e ≈ 0.7) - velocity at periapsis
+    e_target = 0.7
+    v_elliptical = math.sqrt(planet.mu * (1 + e_target) / r0)
     
     return (
         Scenario(
@@ -102,11 +107,28 @@ def generate_default_scenarios(planet: Planet) -> tuple[Scenario, ...]:
             velocity=-v_circular,
             description=f"Circular orbit velocity but retrograde (~{v_circular/1000:.1f} km/s).",
         ),
+        # New universal scenarios
+        Scenario(
+            key="elliptical",
+            name="Highly Elliptical",
+            r0=r0,
+            velocity=v_elliptical,
+            description=f"Molniya-style orbit with eccentricity ~0.7 (~{v_elliptical/1000:.1f} km/s).",
+        ),
+        Scenario(
+            key="freefall",
+            name="Free Fall",
+            r0=r0,
+            velocity=0,
+            description="Pure radial drop toward planet center.",
+        ),
     )
 
 
 # Planet-specific scenario definitions with hand-tuned values
 # Values calculated using: v_circular = sqrt(mu/r), v_escape = sqrt(2*mu/r)
+# v_elliptical = sqrt(mu*(1+e)/r) at periapsis for target eccentricity e
+# r_sync = (mu*T^2 / 4*pi^2)^(1/3) for synchronous orbit with period T
 PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
     "Earth": (
         Scenario("leo", "LEO", r0=7_000_000, velocity=7_546, description="Low Earth orbit (~7.5 km/s prograde)."),
@@ -114,6 +136,10 @@ PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
         Scenario("escape", "Escape", r0=7_000_000, velocity=11_500, description="Exceeds escape velocity (~11.5 km/s)."),
         Scenario("parabolic", "Parabolic", r0=7_000_000, velocity=10_670, description="Near escape threshold (~10.7 km/s)."),
         Scenario("retrograde", "Retrograde", r0=7_000_000, velocity=-7_546, description="LEO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=7_000_000, velocity=9_837, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=7_000_000, velocity=0, description="Pure radial drop toward Earth center."),
+        Scenario("geo", "Geostationary", r0=42_164_000, velocity=3_075, description="24-hour orbital period at 35,786 km altitude."),
     ),
     "Mars": (
         Scenario("lmo", "Low Mars Orbit", r0=3_800_000, velocity=3_360, description="Low Mars orbit (~3.4 km/s prograde)."),
@@ -121,13 +147,20 @@ PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
         Scenario("escape", "Escape", r0=3_800_000, velocity=5_200, description="Exceeds escape velocity (~5.2 km/s)."),
         Scenario("parabolic", "Parabolic", r0=3_800_000, velocity=4_750, description="Near escape threshold (~4.8 km/s)."),
         Scenario("retrograde", "Retrograde", r0=3_800_000, velocity=-3_360, description="LMO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=3_800_000, velocity=4_380, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=3_800_000, velocity=0, description="Pure radial drop toward Mars center."),
+        Scenario("areo", "Areosynchronous", r0=20_428_000, velocity=1_448, description="24h 37m orbital period (Mars day)."),
     ),
     "Moon": (
-        Scenario("llo", "Low Lunar Orbit", r0=1_937_000, velocity=1_633, description="Low lunar orbit (~1.6 km/s prograde)."),
-        Scenario("suborbital", "Suborbital", r0=1_937_000, velocity=1_300, description="Too slow for orbit (~1.3 km/s)."),
-        Scenario("escape", "Escape", r0=1_937_000, velocity=2_600, description="Exceeds escape velocity (~2.6 km/s)."),
-        Scenario("parabolic", "Parabolic", r0=1_937_000, velocity=2_310, description="Near escape threshold (~2.3 km/s)."),
-        Scenario("retrograde", "Retrograde", r0=1_937_000, velocity=-1_633, description="LLO velocity but retrograde."),
+        Scenario("llo", "Low Lunar Orbit", r0=1_937_000, velocity=1_590, description="Low lunar orbit (~1.6 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=1_937_000, velocity=1_256, description="Too slow for orbit (~1.3 km/s)."),
+        Scenario("escape", "Escape", r0=1_937_000, velocity=2_474, description="Exceeds escape velocity (~2.5 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=1_937_000, velocity=2_249, description="Near escape threshold (~2.2 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=1_937_000, velocity=-1_590, description="LLO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=1_937_000, velocity=2_074, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=1_937_000, velocity=0, description="Pure radial drop toward Moon center."),
     ),
     "Jupiter": (
         Scenario("ljo", "Low Jupiter Orbit", r0=75_000_000, velocity=41_070, description="Low Jupiter orbit (~41 km/s prograde)."),
@@ -135,20 +168,29 @@ PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
         Scenario("escape", "Escape", r0=75_000_000, velocity=64_000, description="Exceeds escape velocity (~64 km/s)."),
         Scenario("parabolic", "Parabolic", r0=75_000_000, velocity=58_080, description="Near escape threshold (~58 km/s)."),
         Scenario("retrograde", "Retrograde", r0=75_000_000, velocity=-41_070, description="LJO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=75_000_000, velocity=53_590, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=75_000_000, velocity=0, description="Pure radial drop toward Jupiter center."),
     ),
     "Neptune": (
-        Scenario("lno", "Low Neptune Orbit", r0=27_000_000, velocity=19_900, description="Low Neptune orbit (~20 km/s prograde)."),
-        Scenario("suborbital", "Suborbital", r0=27_000_000, velocity=15_500, description="Too slow for orbit (~15.5 km/s)."),
-        Scenario("escape", "Escape", r0=27_000_000, velocity=31_000, description="Exceeds escape velocity (~31 km/s)."),
-        Scenario("parabolic", "Parabolic", r0=27_000_000, velocity=28_140, description="Near escape threshold (~28 km/s)."),
-        Scenario("retrograde", "Retrograde", r0=27_000_000, velocity=-19_900, description="LNO velocity but retrograde."),
+        Scenario("lno", "Low Neptune Orbit", r0=27_000_000, velocity=15_909, description="Low Neptune orbit (~15.9 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=27_000_000, velocity=12_568, description="Too slow for orbit (~12.6 km/s)."),
+        Scenario("escape", "Escape", r0=27_000_000, velocity=24_749, description="Exceeds escape velocity (~24.7 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=27_000_000, velocity=22_499, description="Near escape threshold (~22.5 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=27_000_000, velocity=-15_909, description="LNO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=27_000_000, velocity=20_760, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=27_000_000, velocity=0, description="Pure radial drop toward Neptune center."),
     ),
     "Venus": (
-        Scenario("lvo", "Low Venus Orbit", r0=6_700_000, velocity=7_160, description="Low Venus orbit (~7.2 km/s prograde)."),
-        Scenario("suborbital", "Suborbital", r0=6_700_000, velocity=5_700, description="Too slow for orbit (~5.7 km/s)."),
-        Scenario("escape", "Escape", r0=6_700_000, velocity=11_100, description="Exceeds escape velocity (~11.1 km/s)."),
-        Scenario("parabolic", "Parabolic", r0=6_700_000, velocity=10_120, description="Near escape threshold (~10.1 km/s)."),
-        Scenario("retrograde", "Retrograde", r0=6_700_000, velocity=-7_160, description="LVO velocity but retrograde."),
+        Scenario("lvo", "Low Venus Orbit", r0=6_700_000, velocity=6_963, description="Low Venus orbit (~7.0 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=6_700_000, velocity=5_501, description="Too slow for orbit (~5.5 km/s)."),
+        Scenario("escape", "Escape", r0=6_700_000, velocity=10_832, description="Exceeds escape velocity (~10.8 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=6_700_000, velocity=9_847, description="Near escape threshold (~9.8 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=6_700_000, velocity=-6_963, description="LVO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=6_700_000, velocity=9_082, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=6_700_000, velocity=0, description="Pure radial drop toward Venus center."),
     ),
     "Saturn": (
         Scenario("lso", "Low Saturn Orbit", r0=64_000_000, velocity=24_300, description="Low Saturn orbit (~24 km/s prograde)."),
@@ -156,13 +198,19 @@ PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
         Scenario("escape", "Escape", r0=64_000_000, velocity=38_000, description="Exceeds escape velocity (~38 km/s)."),
         Scenario("parabolic", "Parabolic", r0=64_000_000, velocity=34_360, description="Near escape threshold (~34 km/s)."),
         Scenario("retrograde", "Retrograde", r0=64_000_000, velocity=-24_300, description="LSO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=64_000_000, velocity=31_700, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=64_000_000, velocity=0, description="Pure radial drop toward Saturn center."),
     ),
     "Uranus": (
-        Scenario("luo", "Low Uranus Orbit", r0=28_000_000, velocity=14_600, description="Low Uranus orbit (~14.6 km/s prograde)."),
-        Scenario("suborbital", "Suborbital", r0=28_000_000, velocity=11_500, description="Too slow for orbit (~11.5 km/s)."),
-        Scenario("escape", "Escape", r0=28_000_000, velocity=23_000, description="Exceeds escape velocity (~23 km/s)."),
-        Scenario("parabolic", "Parabolic", r0=28_000_000, velocity=20_650, description="Near escape threshold (~21 km/s)."),
-        Scenario("retrograde", "Retrograde", r0=28_000_000, velocity=-14_600, description="LUO velocity but retrograde."),
+        Scenario("luo", "Low Uranus Orbit", r0=28_000_000, velocity=14_384, description="Low Uranus orbit (~14.4 km/s prograde)."),
+        Scenario("suborbital", "Suborbital", r0=28_000_000, velocity=11_363, description="Too slow for orbit (~11.4 km/s)."),
+        Scenario("escape", "Escape", r0=28_000_000, velocity=22_378, description="Exceeds escape velocity (~22.4 km/s)."),
+        Scenario("parabolic", "Parabolic", r0=28_000_000, velocity=20_343, description="Near escape threshold (~20.3 km/s)."),
+        Scenario("retrograde", "Retrograde", r0=28_000_000, velocity=-14_384, description="LUO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=28_000_000, velocity=18_760, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=28_000_000, velocity=0, description="Pure radial drop toward Uranus center."),
     ),
     "Mercury": (
         Scenario("lmo", "Low Mercury Orbit", r0=2_700_000, velocity=2_860, description="Low Mercury orbit (~2.9 km/s prograde)."),
@@ -170,6 +218,9 @@ PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
         Scenario("escape", "Escape", r0=2_700_000, velocity=4_450, description="Exceeds escape velocity (~4.5 km/s)."),
         Scenario("parabolic", "Parabolic", r0=2_700_000, velocity=4_040, description="Near escape threshold (~4.0 km/s)."),
         Scenario("retrograde", "Retrograde", r0=2_700_000, velocity=-2_860, description="LMO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=2_700_000, velocity=3_730, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=2_700_000, velocity=0, description="Pure radial drop toward Mercury center."),
     ),
     "Io": (
         Scenario("lio", "Low Io Orbit", r0=2_000_000, velocity=1_728, description="Low Io orbit (~1.7 km/s prograde)."),
@@ -177,6 +228,9 @@ PLANET_SCENARIOS: dict[str, tuple[Scenario, ...]] = {
         Scenario("escape", "Escape", r0=2_000_000, velocity=2_700, description="Exceeds escape velocity (~2.7 km/s)."),
         Scenario("parabolic", "Parabolic", r0=2_000_000, velocity=2_440, description="Near escape threshold (~2.4 km/s)."),
         Scenario("retrograde", "Retrograde", r0=2_000_000, velocity=-1_728, description="LIO velocity but retrograde."),
+        # New scenarios
+        Scenario("elliptical", "Highly Elliptical", r0=2_000_000, velocity=2_254, description="Molniya-style orbit with eccentricity ~0.7."),
+        Scenario("freefall", "Free Fall", r0=2_000_000, velocity=0, description="Pure radial drop toward Io center."),
     ),
 }
 
@@ -224,6 +278,10 @@ SATELLITE_COLOR = (255, 255, 255)
 SATELLITE_PIXEL_RADIUS = 6
 HUD_TEXT_COLOR = (234, 241, 255)
 HUD_SHADOW_COLOR = (10, 15, 30, 120)
+# HUD color coding for at-a-glance readability
+HUD_LABEL_COLOR = (180, 185, 195)           # White/Gray for static labels
+HUD_VALUE_COLOR = (100, 220, 255)           # Cyan/Light Blue for physics values
+HUD_WARNING_COLOR = (255, 180, 60)          # Yellow/Orange for warnings/critical values
 ORBIT_PRIMARY_COLOR = (255, 255, 255, 180)
 ORBIT_LINE_WIDTH = 2
 VEL_ARROW_COLOR = (255, 220, 180)
@@ -632,6 +690,173 @@ def compute_orbit_prediction(r_init: np.ndarray, v_init: np.ndarray, mu: float) 
 
 
 # =======================
+#   STARFIELD CLASS
+# =======================
+@dataclass
+class Star:
+    """Represents a single star in the infinite parallax starfield."""
+    x: float           # Base x position (0 to screen width)
+    y: float           # Base y position (0 to screen height)
+    size: int          # Radius in pixels (1-3)
+    brightness: int    # Gray value (0-255), linked to depth
+    depth: float       # Parallax depth factor (0.1 = far, 0.5 = close)
+
+
+class Starfield:
+    """
+    Generates and renders an infinite parallax starfield background.
+    
+    Stars have varying depths that affect both their parallax speed and brightness:
+    - Far stars (depth ~0.1): Move slowly, appear dimmer (dark gray)
+    - Close stars (depth ~0.5): Move faster, appear brighter (white)
+    """
+    
+    def __init__(self, num_stars: int = 200, seed: int = 42, base_width: int = 2000, base_height: int = 1500):
+        """
+        Generate starfield with consistent positions using a fixed seed.
+        
+        Args:
+            num_stars: Number of stars to generate (default 200)
+            seed: Random seed for reproducible star placement
+            base_width: Base width for star positioning (stars will wrap to actual screen size)
+            base_height: Base height for star positioning
+        """
+        rng = random.Random(seed)
+        self.base_width = base_width
+        self.base_height = base_height
+        self.stars: list[Star] = []
+        
+        for _ in range(num_stars):
+            # Random position within base dimensions
+            x = rng.uniform(0, base_width)
+            y = rng.uniform(0, base_height)
+            
+            # Random size (1-3 pixels radius)
+            size = rng.randint(1, 3)
+            
+            # Random depth: 0.1 (very far) to 0.5 (closer)
+            depth = rng.uniform(0.1, 0.5)
+            
+            # Brightness linked to depth: far stars are dim, close stars are bright
+            # Map depth [0.1, 0.5] to brightness [80, 255]
+            # Linear interpolation: brightness = 80 + (depth - 0.1) / 0.4 * 175
+            brightness = int(80 + (depth - 0.1) / 0.4 * 175)
+            brightness = max(80, min(255, brightness))  # Clamp to valid range
+            
+            self.stars.append(Star(x, y, size, brightness, depth))
+    
+    def draw(self, surface: pygame.Surface, camera_x: float = 0.0, camera_y: float = 0.0) -> None:
+        """
+        Draw the starfield with infinite parallax scrolling.
+        
+        Stars shift based on camera position and their individual depth values,
+        creating a layered 3D effect. Stars wrap around screen edges for infinite scrolling.
+        
+        Args:
+            surface: Pygame surface to draw on
+            camera_x: Camera x position in world coordinates
+            camera_y: Camera y position in world coordinates
+        """
+        width, height = surface.get_size()
+        
+        for star in self.stars:
+            # Calculate parallax offset - stars move opposite to camera, scaled by depth
+            # Deeper stars (higher depth) move more, creating parallax effect
+            # Use modulo for infinite wrapping
+            parallax_x = (star.x - camera_x * star.depth * 0.00001) % width
+            parallax_y = (star.y + camera_y * star.depth * 0.00001) % height  # +y because screen Y is inverted
+            
+            # Create grayscale color from brightness
+            star_color = (star.brightness, star.brightness, star.brightness)
+            
+            # Draw star - use set_at for 1px stars (faster), circle for larger
+            screen_x = int(parallax_x)
+            screen_y = int(parallax_y)
+            
+            if star.size == 1:
+                if 0 <= screen_x < width and 0 <= screen_y < height:
+                    surface.set_at((screen_x, screen_y), star_color)
+            else:
+                pygame.draw.circle(surface, star_color, (screen_x, screen_y), star.size)
+
+
+# =======================
+#   PLANET VISUAL EFFECTS
+# =======================
+def draw_planet_atmosphere(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    planet_radius_px: int,
+    atmosphere_color: tuple[int, int, int] = (135, 206, 250),  # Light sky blue
+) -> None:
+    """
+    Draw atmospheric glow effect behind the planet.
+    Renders 3 concentric circles with decreasing alpha for a soft glow.
+    """
+    if planet_radius_px <= 0:
+        return
+    
+    # Create a surface for the atmosphere (needs alpha)
+    glow_layers = [
+        (planet_radius_px + int(planet_radius_px * 0.25), 15),  # Outer glow: 25% larger, alpha 15
+        (planet_radius_px + int(planet_radius_px * 0.15), 20),  # Middle glow: 15% larger, alpha 20
+        (planet_radius_px + int(planet_radius_px * 0.08), 25),  # Inner glow: 8% larger, alpha 25
+    ]
+    
+    for glow_radius, alpha in glow_layers:
+        if glow_radius > 0:
+            glow_surface = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                glow_surface,
+                (*atmosphere_color, alpha),
+                (glow_radius, glow_radius),
+                glow_radius,
+            )
+            glow_rect = glow_surface.get_rect(center=position)
+            surface.blit(glow_surface, glow_rect)
+
+
+def draw_planet_night_side(
+    surface: pygame.Surface,
+    position: tuple[int, int],
+    radius_px: int,
+    shadow_side: str = "left",
+    shadow_alpha: int = 100,
+) -> None:
+    """
+    Draw a semi-transparent shadow on one half of the planet to simulate 3D shading.
+    
+    Args:
+        surface: The surface to draw on
+        position: Center position of the planet
+        radius_px: Planet radius in pixels
+        shadow_side: "left" or "right" - which side is in shadow
+        shadow_alpha: Transparency of the shadow (0-255)
+    """
+    if radius_px <= 0:
+        return
+    
+    diameter = radius_px * 2
+    
+    # Create a circular mask surface
+    shadow_surface = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+    
+    # Draw the full circle mask
+    pygame.draw.circle(shadow_surface, (0, 0, 0, shadow_alpha), (radius_px, radius_px), radius_px)
+    
+    # Clear the lit half by drawing a transparent rectangle over it
+    if shadow_side == "left":
+        # Shadow on left, so clear the right half
+        pygame.draw.rect(shadow_surface, (0, 0, 0, 0), (radius_px, 0, radius_px, diameter))
+    else:
+        # Shadow on right, so clear the left half
+        pygame.draw.rect(shadow_surface, (0, 0, 0, 0), (0, 0, radius_px, diameter))
+    
+    shadow_rect = shadow_surface.get_rect(center=position)
+    surface.blit(shadow_surface, shadow_rect)
+
+
+# =======================
 #   BUTTON CLASS
 # =======================
 class Button:
@@ -730,10 +955,9 @@ def run_main_menu(
     briefing_title_font = pygame.font.SysFont("arial", 22, bold=True)
     briefing_font = pygame.font.SysFont("consolas", 15)
     
-    # Generate starfield (100 random stars)
-    rng = random.Random(42)  # Fixed seed for consistent starfield
-    stars = [(rng.randint(0, 2000), rng.randint(0, 1500), rng.randint(1, 3), rng.randint(100, 255)) 
-             for _ in range(100)]
+    # Create starfield for background with animated drift
+    starfield = Starfield(num_stars=200, seed=42)
+    menu_start_time = time.perf_counter()
     
     # State
     selected_planet = initial_planet
@@ -840,16 +1064,12 @@ def run_main_menu(
         # =====================
         screen.fill(BACKGROUND_COLOR)
         
-        # Draw starfield
-        for star_x, star_y, star_size, star_brightness in stars:
-            # Wrap stars to current screen size
-            sx = star_x % WIDTH
-            sy = star_y % HEIGHT
-            star_color = (star_brightness, star_brightness, star_brightness)
-            if star_size == 1:
-                screen.set_at((sx, sy), star_color)
-            else:
-                pygame.draw.circle(screen, star_color, (sx, sy), star_size // 2 + 1)
+        # Draw starfield with gentle animated drift
+        elapsed = time.perf_counter() - menu_start_time
+        # Slow diagonal drift - creates a peaceful space ambiance
+        drift_x = elapsed * 5000000  # Horizontal drift speed
+        drift_y = elapsed * 3000000  # Vertical drift speed
+        starfield.draw(screen, drift_x, drift_y)
         
         # Title with shadow
         title_text = "SIMULERING AV OMLOPPSBANA"
@@ -1152,6 +1372,9 @@ def main():
     grid_label_font = pygame.font.SysFont("consolas", 14)
     grid_axis_font = pygame.font.SysFont("consolas", 16)
     title_font = pygame.font.SysFont("arial", 48, bold=True)
+    
+    # Create starfield for game loop background (200 stars with parallax effect)
+    game_starfield = Starfield(num_stars=200, seed=42)
 
     # Mutable state containers that will be updated from menu
     scenarios_list: list[Scenario] = []
@@ -1809,8 +2032,12 @@ def main():
 
             # === RENDER ===
             screen.fill(BACKGROUND_COLOR)
-
+            
+            # Calculate camera position tuple for rendering
             camera_center_tuple = (float(camera_center[0]), float(camera_center[1]))
+            
+            # Draw starfield background with parallax effect
+            game_starfield.draw(screen, camera_center_tuple[0], camera_center_tuple[1])
             if grid_overlay_enabled:
                 draw_coordinate_grid(
                     grid_surface,
@@ -1847,7 +2074,15 @@ def main():
                     screen.blit(orbit_layer, (0, 0))
 
             planet_radius_px = max(1, int(current_planet.radius * ppm))
+            
+            # Draw atmosphere glow behind the planet
+            draw_planet_atmosphere(screen, planet_screen_pos, planet_radius_px)
+            
+            # Draw the planet
             draw_planet(screen, current_planet, planet_screen_pos, planet_radius_px)
+            
+            # Draw night-side shadow for 3D effect (shadow on left side)
+            draw_planet_night_side(screen, planet_screen_pos, planet_radius_px, shadow_side="left")
 
             # Shock ring on impact
             if impact_info is not None and shock_ring_start is not None:
@@ -1941,25 +2176,69 @@ def main():
             e = eccentricity(r, v, current_planet.mu)
             altitude_km = (rmag - current_planet.radius) / 1_000.0
             scenario = get_current_scenario()
-            hud_entries = [
-                f"Planet: {current_planet.name}",
-                f"Scenario: {scenario.name}",
-                f"Integrator: {integrator}",
-                f"t {t_sim:,.0f} s   x{real_time_speed:.1f}",
-                f"alt {altitude_km:,.1f} km",
-                f"|v| {vmag:,.1f} m/s   e {e:.3f}",
-                f"e {eps: .2e} J/kg",
+            
+            # Determine colors for physics values based on warning conditions
+            altitude_value_color = HUD_WARNING_COLOR if altitude_km < 0 else HUD_VALUE_COLOR
+            # Warning color for very high eccentricity (near escape) or negative energy becoming positive
+            energy_value_color = HUD_WARNING_COLOR if eps > 0 else HUD_VALUE_COLOR
+            
+            # HUD entries: tuple of (label, value, value_color) or None for separator
+            # Label uses HUD_LABEL_COLOR, value uses specified color
+            hud_entries: list[tuple[str, str, tuple[int, int, int]] | None] = [
+                # Simulation Info (static values use label color for both)
+                ("Planet:", current_planet.name, HUD_LABEL_COLOR),
+                ("Scenario:", scenario.name, HUD_LABEL_COLOR),
+                ("Integrator:", integrator, HUD_LABEL_COLOR),
+                ("Time:", f"{t_sim:,.0f} s", HUD_VALUE_COLOR),
+                ("Time Warp:", f"{real_time_speed:.0f}x", HUD_VALUE_COLOR),
+                None,  # Separator
+                # Orbital Data (physics values use cyan, warnings use orange)
+                ("Altitude:", f"{altitude_km:,.1f} km", altitude_value_color),
+                ("Velocity:", f"{vmag:,.1f} m/s", HUD_VALUE_COLOR),
+                ("Eccentricity:", f"{e:.4f}", HUD_VALUE_COLOR),
+                ("Energy:", f"{eps:.2e} J/kg", energy_value_color),
             ]
+            
             padding_x = 16
             padding_y = 14
             line_height = font.get_linesize()
-            hud_width = max(font.size(line)[0] for line in hud_entries) + padding_x * 2
-            hud_height = line_height * len(hud_entries) + padding_y
+            separator_height = 8  # Extra space for separator
+            
+            # Calculate width (excluding None separators)
+            text_entries = [(label, value) for entry in hud_entries if entry is not None for label, value, _ in [entry]]
+            hud_width = max(font.size(label + " " + value)[0] for label, value in text_entries) + padding_x * 2
+            
+            # Calculate height (separators add less height than text lines)
+            num_separators = sum(1 for line in hud_entries if line is None)
+            num_text_lines = len(hud_entries) - num_separators
+            hud_height = line_height * num_text_lines + separator_height * num_separators + padding_y
+            
             hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
             pygame.draw.rect(hud_surface, LABEL_BACKGROUND_COLOR, hud_surface.get_rect(), border_radius=14)
-            for index, line in enumerate(hud_entries):
-                text_surf = font.render(line, True, HUD_TEXT_COLOR)
-                hud_surface.blit(text_surf, (padding_x, int(padding_y / 2) + index * line_height))
+            
+            y_offset = int(padding_y / 2)
+            for entry in hud_entries:
+                if entry is None:
+                    # Draw separator line
+                    sep_y = y_offset + separator_height // 2
+                    pygame.draw.line(
+                        hud_surface,
+                        (*HUD_LABEL_COLOR[:3], 60),  # Dim separator
+                        (padding_x, sep_y),
+                        (hud_width - padding_x, sep_y),
+                        1
+                    )
+                    y_offset += separator_height
+                else:
+                    label, value, value_color = entry
+                    # Render label in gray
+                    label_surf = font.render(label, True, HUD_LABEL_COLOR)
+                    hud_surface.blit(label_surf, (padding_x, y_offset))
+                    # Render value in its designated color (cyan for physics, orange for warnings)
+                    value_surf = font.render(" " + value, True, value_color)
+                    hud_surface.blit(value_surf, (padding_x + label_surf.get_width(), y_offset))
+                    y_offset += line_height
+            
             screen.blit(hud_surface, (20, 20))
 
             # Sim buttons
