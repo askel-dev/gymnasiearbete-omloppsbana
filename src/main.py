@@ -263,6 +263,7 @@ ESCAPE_RADIUS_FACTOR = 20.0
 ORBIT_PREDICTION_INTERVAL = 1.0
 MAX_ORBIT_PREDICTION_SAMPLES = 2_000
 MAX_RENDERED_ORBIT_POINTS = 800
+BURN_DELTA_V = 10.0
 integrator = "RK4"              # "RK4" = Runge-Kutta 4, "Euler" = Euler's method
 
 # =======================
@@ -1838,6 +1839,40 @@ def main():
                             toggle_camera()
                         elif event.key == pygame.K_v:
                             show_velocity_arrow = not show_velocity_arrow
+                        elif event.key == pygame.K_b:
+                            vmag = float(np.linalg.norm(v))
+                            if vmag > 1e-6:
+                                v_hat = v / vmag
+                                dv = BURN_DELTA_V
+                                burn_direction = "prograde"
+                                if event.mod & pygame.KMOD_SHIFT:
+                                    v -= dv * v_hat
+                                    burn_direction = "retrograde"
+                                else:
+                                    v += dv * v_hat
+                                orbit_prediction_period, orbit_prediction_points = compute_orbit_prediction(
+                                    r,
+                                    v,
+                                    current_planet.mu,
+                                )
+                                if logger is not None:
+                                    import json
+                                    rmag = float(np.linalg.norm(r))
+                                    vmag = float(np.linalg.norm(v))
+                                    logger.log_event(
+                                        [
+                                            float(t_sim),
+                                            "burn",
+                                            rmag,
+                                            vmag,
+                                            json.dumps(
+                                                {
+                                                    "delta_v": dv,
+                                                    "direction": burn_direction,
+                                                }
+                                            ),
+                                        ]
+                                    )
                             
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1 and state == "running":
