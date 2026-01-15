@@ -1,0 +1,21 @@
+{
+  "scenario_key": "elliptical_euler",
+  "scenario_name": "Elliptical_Euler",
+  "planet_name": "Earth",
+  "planet_radius": 6371000.0,
+  "R0": [
+    6971000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    8695.675000066714
+  ],
+  "v0": 8695.675000066714,
+  "G": 6.674e-11,
+  "M": 5.972e+24,
+  "mu": 398571280000000.0,
+  "integrator": "Euler",
+  "dt_phys": 0.25,
+  "code_version": "report_generation"
+}

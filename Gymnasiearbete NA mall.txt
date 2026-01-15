@@ -1,0 +1,158 @@
+﻿Gymnasiearbete Naturvetenskapliga programmet 
+Rapportens titel 
+  
+
+
+Här kan du placera en bild om det  
+är lämpligt för ditt gymnasiearbete.
+
+
+
+
+
+
+                                                                        
+Elevens namn 
+Handledarens namn 
+________________
+
+
+Sammanfattning 
+Här sammanfattar du kort och koncist ditt arbete. Utgå från dina frågeställningar. En person ska kunna läsa sammanfattningen och på så vis få en god inblick i uppsatsens innehåll. Sammanfattningen ska vara max 1 sida. 
+Abstract 
+Sammanfattning på engelska, skriven med ett naturvetenskapligt språk.
+________________
+
+
+ 
+Innehållsförteckning 
+Innehållsförteckningen ska ha sidhänvisningar, till rubriker och underrubriker. 
+Var konsekvent vid rubriksättning så att du enkelt kan infoga en innehållsförteckning med ditt  ordbehandlingsprogram, exempelvis Word eller docs. Då klickar du på referenser och därefter direkt på  ikonen Innehållsförteckning eller väljer du infoga och innehållsförteckning
+
+
+
+Sammanfattning        1
+Abstract        1
+1. Inledning        4
+1.1 Syfte och mål        4
+1.2 Bakgrund        4
+1.3 Frågeställningar        4
+1.4 Avgränsning        4
+1.5 Definition av begrepp        4
+2. Metod och material        5
+3. Källhänvisning        5
+Obs! Detta avsnitt finns ej med i din rapport.        5
+4. Formalia        6
+Obs! Detta avsnitt finns ej med i din rapport.        6
+4.1 Text        6
+4.2 Citat        6
+4.3 Tabeller, diagram och figurer        7
+4.4 Övrigt        7
+5. Resultat        8
+6. Slutsats och diskussion        9
+7. Källförteckning        10
+8. Bilagor        11
+
+
+
+
+
+
+________________
+
+
+
+
+                1. Inledning 
+1.1 Syfte och mål 
+Vilket syfte och mål har du med ditt arbete? Det vill säga, varför ska du göra just detta arbete,  inom detta ämnesområde och vilket är ditt mål med arbetet? (Ex: Syftet med mitt arbete är att  undersöka hur en Teslaspole fungerar. Målet med arbete är att göra en demonstrationsfilm, så att  andra kan förstå hur den fungerar.) 
+1.2 Bakgrund 
+Här ger du läsaren en teoretisk bakgrund till ämnesområdet för projektet. Frågor som ska  besvaras är: Vad har man forskat på tidigare och vad har man kommit fram till? Vilken forskning  inom området pågår just nu? Bakgrundsbeskrivningen ska ge läsaren en introduktion till  ämnesområdet och dessutom locka till läsning av din rapport! 
+1.3 Frågeställningar 
+Vilken frågeställning (eller vilka frågeställningar) ska du besvara med ditt arbete? Vad ska ni  undersöka, göra eller ta reda på? Här är det viktigt att du avgränsar ditt projekt samt motiverar  och tydliggör din frågeställning väl. OBS! Det är mycket viktigt med en tydlig frågeställning! 
+1.4 Avgränsning 
+Vid behov motiverar du de eventuella avgränsningar du har gjort i ditt projekt. (Ex: Du har valt  att göra en elektronisk formelsamling. Eftersom det är ett stort och brett område så väljer du att  avgränsa ditt arbete till att endast göra det inom ett specifikt område.) 
+1.5 Definition av begrepp 
+Vid behov definierar du här begrepp som är centrala för din rapport och ditt ämnesområde. Framförallt är detta viktigt då det finns en risk att begreppen kan uppfattas olika eller betyda  olika saker. Det ska tydligt framgå hur begreppen kommer att användas i din rapport. 
+2. Metod och material 
+Här redovisar du vilken metod du kommer att arbeta efter för att besvara frågeställningen du  tidigare har angett. Det kan vara: 
+∙ Enkäter 
+∙ Intervjuer 
+∙ Experiment 
+∙ Observationer 
+∙ Laborationer 
+∙ Fältstudier 
+∙ Litteraturstudier 
+Du ska också resonera om den valda metoden och de valda källorna, glöm inte det källkritiska  förhållningssättet!
+________________
+
+
+ 
+3. Källhänvisning 
+Obs! Detta avsnitt finns ej med i din rapport. 
+Glöm inte att kontinuerligt källhänvisa i din rapport. Från vilka källor hämtar du ditt material?  Följ regeln att all fakta och alla påståenden eller konstateranden som du inte själv uttalat måste  styrkas med en källa. Enbart kunskap som betraktas som allmänt känd, till exempel att gräset är  grönt slipper undan en källhänvisning. Syftet med detta är att läsarna och framförallt opponenten,  ska kunna söka upp och kontrollera dina uppgifter. 
+Det finns två vanliga system för löpande källhänvisning, Harvard och Oxford. I den  naturvetenskapliga rapporten till gymnasiearbetet ska du använda Harvardsystemet, det vill säga  parenteser med efternamn och år, i den löpande texten, enligt beskrivningen nedan. 
+Tryckta källor: 
+Bok: Inom parentes skrivs författarens namn, utgivningsår och  sidhänvisning:  
+(Kumm, 2002 s. 4). 
+Tidningsartikel: Inom parentes skrivs författare, år och sida (Flores, 1998, s. 37) 
+Tidskriftsartikel: Inom parentes skrivs författare, år och sida (Jervas, 2012 s.18) 
+Litteratur utan författare:         Exempelvis offentligt tryck eller uppslagsverk Inom parentes skrivs uppslagsverkets namn och årtal: 
+(NE, 2002) 
+Andra källor: 
+Internet: I källhänvisningen skrivs internetadressen samt datum då  informationen hämtades (www.vetenskap.se 2014-03-07) 
+
+Observera att tidskrifts- samt tidningsartiklar som du läst på  internet, men som finns i den tryckta upplagan, ska hanteras  som tryckt källa. 
+Personlig kommunikation:         Exempelvis intervju, inom parentes skrivs om den intervjuade gett sitt tillstånd ange namn, annars kodade  uppgifter: (Svensson, 2010)
+ 
+4. Formalia 
+Obs! Detta avsnitt finns ej med i din rapport. 
+4.1 Text 
+Rapporten skrivs i ett strikt typsnitt som är lättläst, exempelvis Calibri eller Times New Roman,  teckenstorlek 12 i löptext och 14 i rubriker. 
+4.2 Citat 
+Vid citat måste du citera ordagrant och ange om du utesluter något ur citatet. Du får börja och  avsluta citatet var du vill. Du markerar korta citat med citattecken som ser ut så här: ”mamamg  ejhehe ”och citat som är längre än 3 rader skrivs som blockcitat. Det vill säga att texten dras in  genom tab och skrivs i storlek 10. 
+Rerer jajaj jejkejmemem kmjakakka mamahhar mememma hahrhke jjajhy hehge hghe,mlöfomh netrjep  hehehtat ememrarei kekeijudsusje kejkejuejej lerkurkmekl gert fuling hult yujle jkeklkie klöpied gröget  kldööör nemememr mememah ememejheh e,mejeuhe ärtkleyen jkelelm mememeh memem röörnnhwnjnnm  mjeheh nwhdhgydhnnfjfjmrnebheb meegellr gffe ddlirr. 
+(Marie Lindkvist) 
+Om du vill utesluta en lång del av ett citat du markerar du det med [---] och sedan fortsätter du  att citera. Om du vill utesluta en kortare del, t.ex. en del av en mening markerar du det med tre  punkter […].  
+Citat inom citat omges av enkla citattecken, enligt följande ”mamamam gegr för ´mam  mamr´mamg rtil fllr ger”. 
+Om du citerar hela meningar, så kommer citattecknet efter sista meningens punkt. Om du citerar  del av en mening sist i din mening, så kommer citattecknet före punkten. 
+4.3 Tabeller, diagram och figurer 
+Tabeller, diagram och figurer ska stå självständigt från texten. De ska ha rubrik och de ska  numreras. Tabeller ska ha förklarande text ovanför, figurer har den under. I texten ska du  kommentera och hänvisa till dem, t.ex. kan du skriva ”(se figur nr. 3)” eller ”som framgår av  tabell 2”. Tänk på att tabeller, diagram och figurer som du inte själv har skapat har samma krav  på källhänvisning som allting annat. 
+4.4 Övrigt 
+För mer information om formalia och annan information om texter och texters utformning  hänvisar vi till Svenska skrivregler, en liten skrift som ges ut av Språkrådet. Den finns även som  pdf att ladda ner om så önskas.
+________________
+
+
+
+
+5. Resultat 
+Beskriv vilka resultat din undersökning gav och förklara vad du kom fram till genom ditt arbete.  Använd gärna tabeller, grafer och bilder, som gör det lättare för läsaren att förstå. Inga egna  kommentarer om dina resultat ska finnas här! 
+________________
+ 
+6. Diskussion och slutsats
+Diskussionen utgör den största delen av rapporten. Här visar du att du förstår ditt arbete och dina resultat. Kreativt och kritiskt tänkande är avgörande för att diskussionen ska bli bra. Här ska du diskutera och dra slutsatser från resultatet, samt göra en utvärdering av arbetet. Stämde dina resultat med din hypotes? Kan du lita på dina källor? Fungerade dina metoder? Har dina frågor besvarats och vad betyder resultaten? Motivera dina antaganden, och diskutera osäkerheter. Har dina val av metoder påverkat resultaten, och i så fall hur? Hur relaterar resultaten till annan forskning inom ämnet? Du bör försöka förklara alla dina resultat, både de som stärker dina slutsatser och de som talar emot. Även idéer till fortsatt arbete bör diskuteras och presenteras. När du diskuterar dina resultat bör du inte endast påstå att något förhåller sig på ett visst sätt, utan också varför.. 
+________________
+
+
+7. Källförteckning 
+Här anger du vilka källor du använt dig av i ditt arbete, alltså de du använt som källhänvisningar  löpande i din text. Här ska källan anges mer utförligt än i paranteserna. Syftet med  källförteckningen är att ge läsaren information om var denne kan hitta källorna.  
+Källförteckningen ställs upp i bokstavsordning efter författarens efternamn. Ibland kan det hända  att en källa saknar författarnamn. Då placeras källan i bokstavsordning efter det första ordet i  titeln. Så här skriver du källhänvisningar: 
+Böcker: 
+Andersson, Erik. Hur skriver man en vetenskaplig uppsats? Studentlitteratur 2002. Bengtsson, Ida. Vad bör man tänka på då man skriver en uppsats? Gleerups 2002. 
+Tidningsartiklar: 
+Andersson, Erik. Hur skriver man en vetenskaplig uppsats? Helsingborgs Dagblad 20021014. Tidskrifter: 
+Andersson, Erik. Hur skriver man en vetenskaplig uppsats? Statsvetenskaplig tidskrift nr. 2/2002, s.36-41. 
+Litteratur utan författare (exempelvis offentligt tryck, uppslagsverk etc): Nationalencyklopedin, band nr 7 (uppslagsord höginkomsttagare), Bra Böckers Förlag 2002 Statistisk årsbok 2003 
+Maktutredningens huvudrapport. SOU 1999:44. 
+Internet: 
+www.vetenskap.se/index/ekonomi.htm (2005-01-13) 
+Intervju: 
+Intervju med Gudrun Persson, polischef i Helsingborg, november 2003.
+________________
+
+
+
+
+8. Bilagor 
+Bifoga sådant som inte behöver finnas med i själva arbetet, men som är viktiga för  undersökningen eller resultatet. Det kan t.ex. vara ritningar, intervjuer i sin helhet,  sammanställningar av enkäter eller andra undersökningar.  
+Bilagorna ska namnges konsekvent A-Ö eller numreras från 1. Bilagor ska inte ha sidnumrering,  och enbart rubriken bilagor ska finnas med i innehållsförteckningen.

@@ -192,7 +192,7 @@ def print_summary(
         print(f" Simulerad period (senaste två pericenter) T_sim = {T_sim:.3f} s")
     else:
         print(" Simulerad period: kräver minst två pericenter")
-    print(f" Relativ energidrift ΔE/E = {rel_drift:.3e}")
+    print(f" Relativ energidrift dE/E = {rel_drift:.3e}")
     print(
         " Event-sammanfattning:" +
         ", ".join(f" {etype}: {count}" for etype, count in event_summary.items())

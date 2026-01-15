@@ -9,7 +9,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-from physics import G, M, MU, EARTH_RADIUS, get_acceleration, rk4_step
+from physics import G, M_EARTH, MU_EARTH, EARTH_RADIUS, get_acceleration, rk4_step
+
+# Use Earth constants for sweep
+M = M_EARTH
+MU = MU_EARTH
 
 # ===========================
 # PHYSICS CONSTANTS
@@ -121,7 +125,7 @@ def plot_heatmap(speeds: np.ndarray, angles: np.ndarray, results: np.ndarray) ->
     out = FIGURES_DIR / f"sweep_heatmap_{MODE}.png"
     fig.savefig(out, dpi=180)
     plt.close(fig)
-    print(f"\n✅ Heatmap sparad till {out}")
+    print(f"\nHeatmap sparad till {out}")
 
 # ===========================
 # MAIN

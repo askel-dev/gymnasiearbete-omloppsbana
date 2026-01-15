@@ -1,0 +1,241 @@
+﻿Gymnasiearbete – Naturvetenskapsprogrammet
+Hur påverkas en omloppsbana av startförhållanden?
+En fysikalisk simulering av gravitation, hastighet och riktning.
+
+
+Elev: Axel Jönsson
+Handledare: Fredrik Persson
+Sammanfattning
+Syftet med detta gymnasiearbete är att undersöka hur olika startförhållanden påverkar en kropps omloppsbana runt jorden. Genom att simulera rörelsen med hjälp av en numerisk modell i Python analyseras hur variationer i starthastighet och riktning avgör banans form - cirkulär, elliptisk, parabolisk eller hyperbolisk.
+Simuleringen bygger på Newtons gravitationslag:
+
+och rörelseekvationerna löses med en Runge–Kutta-integrator av fjärde ordningen (RK4). Resultaten visar att små förändringar i hastighet kan avgöra om en kropp förblir i omloppsbana eller lämnar jordens gravitationsfält. Den teoretiska flykthastigheten (~10,7 km/s) överensstämmer väl med simuleringen.
+Energi och rörelsemängdsmoment bevaras nästan exakt, vilket bekräftar att den numeriska metoden fungerar korrekt. Arbetet kopplar samman klassisk mekanik med modern datorbaserad simulering och demonstrerar hur numeriska metoder kan användas inom himmelsmekanik.
+
+
+Abstract
+
+
+Innehållsförtäckning
+
+
+1. Inledning
+1.1 Syfte och mål
+Syftet är att förstå hur olika startförhållanden - främst starthastighet och riktning - påverkar omloppsbanans typ och stabilitet.
+Målet är att med en egen datorsimulering kunna:
+* Visualisera banor runt jorden,
+
+* Mäta energins och rörelsemängdsmomentets stabilitet,
+
+* Undersöka övergången mellan bundna och obundna banor.
+
+1.2 Bakgrund
+Gravitationsrörelser har studerats sedan Johannes Kepler formulerade sina lagar på 1600-talet. Isaac Newton visade senare att dessa lagar kan förklaras med hans gravitationslag:
+
+Keplers första lag beskriver att banor runt solen är elliptiska. Newton visade att detta gäller generellt i tvåkroppssystem, och att banans form bestäms av den specifika mekaniska energin:
+
+I modern tid används datorer för att lösa rörelseekvationerna numeriskt, eftersom analytiska lösningar sällan är möjliga för mer komplexa system. Numeriska metoder som Runge-Kutta och Verlet används inom allt från satellitdesign till rymdforskning.
+Att förstå sambandet mellan hastighet, riktning och omloppsbana är avgörande både för att placera satelliter i stabila banor och för att planera rymdsonder som lämnar jorden.
+För att simulera himlakroppars rörelse måste vi lösa differentialekvationer som beskriver hur position och hastighet förändras över tid. Eftersom gravitationskraften varierar kontinuerligt med avståndet (F∝1/r2) finns det ofta ingen enkel analytisk lösning för fler än två kroppar, eller så är den mycket komplex. Därför används numeriska metoder för att approximera lösningen steg för steg.
+Grundidén med numerisk integration är att utgå från ett känt tillstånd vid tiden t (position rn​ och hastighet vn​) och beräkna tillståndet vid en liten tidpunkt senare, t+Δt.
+1. Matematisk grund: Taylorutveckling
+Grunden för att förstå noggrannheten i numeriska metoder är Taylorutveckling. En godtycklig deriverbar funktion y(t) kan approximeras kring en punkt t med en oändlig summa:
+y(t+h)=y(t)+hy′(t)+2!h2​y′′(t)+3!h3​y′′′(t)+4!h4​y(4)(t)+O(h5)
+Där h är tidssteget (Δt).
+   * y′(t) är derivatan (hastigheten eller accelerationen i vårt fall).
+   * O(hn) representerar resttermen (felet) som vi försummar när vi klipper serien.
+Ju fler termer vi tar med, desto mer exakt blir approximationen. Men att beräkna högre ordningens derivator (y′′, y′′′ osv.) är ofta beräkningsmässigt tungt eller omöjligt i komplexa system.
+2. Eulers metod (Första ordningen)
+Den enklaste metoden, Eulers metod, kapar Taylorserien redan efter den andra termen. Vi antar helt enkelt att lutningen (derivatan) är konstant under hela tidssteget h.
+yn+1​≈yn​+h⋅f(tn​,yn​)
+Matematiskt innebär detta att det lokala felet i varje steg är proportionellt mot h2 (eftersom vi kastar bort termer från h2 och uppåt). Det globala felet – det samlade felet efter många steg – är proportionellt mot h (O(h)).
+Problem med Eulers metod i omloppsbanor: I en omloppsbana ändras accelerationen (kraftens riktning och styrka) hela tiden. Eulers metod "tittar inte framåt"; den tar ett steg i den riktning hastigheten pekar just nu. Innan steget är klart har dock planeten rört sig så att gravitationskraften borde ha ändrat riktning. Detta leder till ett systematiskt fel där energin inte bevaras. Satelliten kommer i simuleringen att driva utåt i en spiral, eftersom metoden överskattar banans energi. För att få en stabil bana med Euler krävs extremt små tidssteg, vilket gör simuleringen långsam.
+3. Runge-Kutta 4 (RK4)
+För att lösa problemet med noggrannhet utan att behöva beräkna komplicerade högre derivator manuellt, används Runge-Kutta-metoder. Din simulering använder den mest kända varianten: fjärde ordningens Runge-Kutta (RK4).
+RK4 är smartare än Euler eftersom den inte bara litar på lutningen i början av steget. Istället gör den fyra "provskott" (delsteg) för att känna av hur lutningen förändras under tidssteget h.
+I min kod (physics.py) beräknas dessa fyra koefficienter (k-värden) för både position och hastighet:
+   1. k1​ (Startlutningen): Lutningen vid intervallets början. Detta är samma som Eulers metod.
+   * Fysikaliskt: Hur rör sig planeten just nu?
+   2. k2​ (Mittpunktslutning 1): Vi tar ett halvt steg (h/2) framåt med hjälp av lutningen k1​ och kollar lutningen där.
+   * Fysikaliskt: Om vi åker halvvägs med starthastigheten, hur ser gravitationskraften ut där?
+   3. k3​ (Mittpunktslutning 2): Vi gör om det halva steget, men nu använder vi lutningen från k2​ för att komma dit.
+   * Fysikaliskt: En korrigerad uppskattning av mittpunkten.
+   4. k4​ (Slutlutningen): Vi tar ett helt steg (h) framåt med hjälp av lutningen k3​.
+   * Fysikaliskt: Hur ser kraften ut vid slutet av intervallet?
+Det slutgiltiga steget beräknas som ett viktat medelvärde av dessa fyra lutningar:
+yn+1​=yn​+6h​(k1​+2k2​+2k3​+k4​)
+Varför RK4 är överlägsen: Genom att välja vikterna (1, 2, 2, 1) på detta specifika sätt, har matematiker visat att RK4 matchar Taylorutvecklingen ända upp till fjärde ordningens term (h4).
+   * Felet: Det lokala felet är av ordningen O(h5) och det globala felet är O(h4).
+   * Jämförelse: Om vi minskar tidssteget h med en faktor 10, blir felet i Eulers metod 10 gånger mindre. I RK4 blir felet 104=10000 gånger mindre.
+Detta gör RK4 extremt effektivt för omloppsbanor. Metoden fångar upp krökningen i banan (hur kraften ändras) mycket väl, vilket gör att energin och rörelsemängdsmomentet bevaras nästan perfekt över lång tid, även med relativt stora tidssteg. I physics.py ser vi detta genom att funktionen rk4_step returnerar en ny position och hastighet som tar hänsyn till hur gravitationsfältet varierar under själva förflyttningen.
+
+
+1.3 Frågeställningar
+   1. Hur påverkar starthastigheten omloppsbanans form och energitillstånd?
+
+   2. Hur påverkar startvinkeln (riktningen) banans form och stabilitet?
+
+   3. Vid vilket gränsvärde övergår banan från bunden (elliptisk) till obunden (hyperbolisk)?
+
+   4. Hur väl bevaras energi och rörelsemängdsmoment i den numeriska modellen?
+
+1.4 Avgränsningar
+Simuleringen begränsas till ett tvåkroppssystem (jorden + satellit).
+Följande effekter ignoreras:
+      * Luftmotstånd
+
+      * Solstrålningstryck
+
+      * Jordens icke-sfäriska form
+
+      * Gravitation från andra himlakroppar
+1.5 Definition av begrepp 
+
+
+2. Metod och material
+2.1 Programvara och bibliotek
+Simuleringen skapades i Python med följande bibliotek:
+         * pygame - realtidsvisualisering av banor
+
+         * numpy - numeriska beräkningar
+
+         * matplotlib – diagram och analys
+
+Valet av Python motiveras av att språket är lätt att läsa, har starkt stöd för vetenskapliga bibliotek och är vanligt inom fysikinriktad programmering.
+
+2.2 Fysikalisk modell
+Rörelsen styrs av Newtons andra lag:
+
+där kraften är gravitationen från jorden:
+
+vilket ger accelerationen:
+
+Rörelseekvationerna löses numeriskt med Runge–Kutta av fjärde ordningen (RK4), som är en noggrann metod för att approximera differentialekvationer.
+Tidssteget sattes till 0,25–1,0 s beroende på precision. Mindre tidssteg ger bättre noggrannhet men kräver mer beräkningstid.
+Startavståndet var:
+ 
+vilket motsvarar cirka 600 km ovan jordytan, en vanlig höjd för låga omloppsbanor.
+2.3 Datainsamling
+Vid varje simulering loggades följande värden som funktion av tiden:
+            * t (sekunder)
+            * r=(x,y)
+            * v=(vx,vy)
+            * Specifik energi:
+
+            * Rörelsemängdsmoment:
+
+            * Excentricitet:
+
+Data sparades i .csv-filer och analyserades med Matplotlib.
+
+Dessutom användes en parameter-sweep som klassificerade banor utifrån energin:
+            * ε < 0 → elliptisk bana (bunden till jorden)
+
+            * ε ≈ 0 → parabolisk bana (gränsfall)
+
+            * ε > 0 → hyperbolisk bana (obunden)
+En heatmap skapades för att visualisera vilka kombinationer av starthastighet och vinkel som gav vilken bantyp.
+3. Resultat
+3.1 Exempel på simulering
+  
+
+🔹 Figur 1. En simulering med starthastigheten 7600 m/s gav en tydligt elliptisk bana. 
+Jorden ligger i en av ellipsens brännpunkter, vilket stämmer överens med Keplers första lag.
+
+
+3.2 Radie över tid
+  
+
+🔹 Figur 2. Radien varierade periodiskt mellan cirka:
+7,0×10^6 m (pericenter)                och        5,0×10^7 m (apocenter).
+Perioden var ungefär 50 000 s.
+Pericenter och apocenter markerades och överensstämde med teorin för en elliptisk bana.
+
+
+3.3 Energibevarelse
+  
+
+🔹 Figur 3. Den specifika energin var konstant med relativ drift ΔE/E ≈ 0
+Detta visar att RK4-metoden bevarar energin mycket väl vid små tidssteg. Energiavvikelser uppstod endast vid större tidssteg, vilket demonstrerar kompromissen mellan noggrannhet och beräkningstid.
+
+
+3.4 Rörelsemängdsmoment
+  
+
+🔹 Figur 4. Det specifika rörelsemängdsmomentet h var konstant under hela simuleringen.
+Eftersom gravitationskraften alltid verkar radiellt (ingen tangentiell kraft) bevaras rörelsemängdsmomentet enligt fysikens lagar.
+Detta bekräftar att den numeriska metoden implementerats korrekt.
+
+
+3.5 Excentricitet
+  
+
+🔹 Figur 5. Excentriciteten var konstant över tiden.
+I exemplet var e ≈ 0.76 vilket motsvarar en stabil elliptisk bana.
+Ett konstant e visar att banans form inte förändras över tid, vilket tyder på hög numerisk stabilitet.
+
+
+3.6 Parameter-sweep: bantyp per starthastighet och vinkel
+  
+
+🔹 Figur 6. Heatmapen visar hur banans typ beror på startförhållanden.
+Färgskalan:
+               * Grönt = elliptisk (bunden)
+               * Gult = parabolisk (gränsfall)
+               * Rött = hyperbolisk (obunden)
+Övergången mellan bunden och obunden bana sker vid cirka 10 700 m/s, vilket exakt motsvarar den teoretiska flykthastigheten från höjden 600 km.
+Den gula zonen representerar gränsfallet där den specifika energin är nära noll.
+4. Diskussion
+4.1 Tolkning
+Resultaten stämmer väl med både teori och förväntningar:
+               * Ökad hastighet leder till ökad excentricitet.
+Vid v0 ≈ 10.7 km/s övergår banan till en öppen (hyperbolisk) bana.
+               * Startvinkeln påverkar banans orientering men inte om banan är bunden eller inte.
+               * RK4-metoden bevarar energi och rörelsemängdsmoment nästan perfekt vid små tidssteg.
+Skillnaden mellan små och stora tidssteg visar tydligt sambandet mellan numerisk precision och beräkningstid. Detta är praktiskt relevant inom satellitdynamik, där långtidssimuleringar kräver både noggrannhet och effektivitet.
+
+
+4.2 Felkällor
+                  * Rundningsfel i flyttalsberäkningar.
+                  * Diskretisering i tidssteg (RK4 är inte symplektisk).
+                  * Ingen hänsyn till atmosfäriskt motstånd.
+                  * Förenkling till tvåkroppssystem (ingen påverkan från månen, solen osv).
+                  * Simuleringen antar en perfekt sfärisk jord.
+Dessa förenklingar innebär att simuleringen inte är en exakt representation av verkligheten, men den fångar de viktigaste fysikaliska principerna.
+
+4.3 Möjliga förbättringar
+För att öka realism eller noggrannhet skulle följande förbättringar kunna implementeras:
+                  * Symplektisk Verlet-integrator för bättre energibevarelse över långa tider.
+                  * Utvidga modellen till tre kroppar (t.ex. jorden–månen–satellit).
+                  * Införa luftmotstånd för låg omloppsbana.
+                  * Ta hänsyn till att jorden inte är perfekt sfärisk (J2-störningar).
+                  * Adaptivt tidssteg (mindre tidssteg nära pericenter).
+
+
+5. Slutsats
+Simuleringen visar tydligt hur en kropps omloppsbana bestäms av dess starthastighet och riktning. Små förändringar i hastighet ger stora skillnader i banans form - från stabil omloppsbana till fullständig flykt.
+Den teoretiska och simulerade flykthastigheten överensstämmer mycket väl (ca 10 670 m/s). Detta bekräftar både fysikteorin och att den numeriska modellen implementerats korrekt.
+RK4-metoden visade hög stabilitet med nästan perfekt bevarande av energi och rörelsemängdsmoment vid lämpliga tidssteg.
+Projektet kopplar teoretisk fysik till praktisk simulering och illustrerar hur datorberäkningar kan användas för att förstå himmelsmekanik på ett modernt och effektivt sätt.
+
+
+6. Källor
+Böcker:
+                  * Tipler & Mosca, Physics for Scientists and Engineers, 6:e upplagan
+                  * NASA (2020), Fundamentals of Orbital Mechanics
+
+Vetenskapliga artiklar:
+                     * IOPscience (2014), Progress in orbital mechanics
+                     * diverse rapporter från DiVA-portal / Uppsala universitet
+
+Webbkällor:
+                        * https://introcs.cs.princeton.edu/python/34nbody/
+                        * https://skolmaterial.ungaforskare.se/mallar-gymnasiearbete/
+                        * https://alvinng4.github.io/grav_sim/5_steps_to_n_body_simulation/
+                        * https://en.wikipedia.org/wiki/N-body_problem
+                        * https://en.wikipedia.org/wiki/Verlet_integration
+                        * https://en.wikipedia.org/wiki/Orbital_mechanics
+
+YouTube (för implementering / visualisering):
+                           * “Coding RK4 in Python”, AskPython
+                           * “Orbital mechanics explained”, m.fl.

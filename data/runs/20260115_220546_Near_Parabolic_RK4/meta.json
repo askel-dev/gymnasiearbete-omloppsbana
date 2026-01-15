@@ -1,0 +1,21 @@
+{
+  "scenario_key": "near_parabolic_rk4",
+  "scenario_name": "Near_Parabolic_RK4",
+  "planet_name": "Earth",
+  "planet_radius": 6371000.0,
+  "R0": [
+    6971000.0,
+    0.0
+  ],
+  "V0": [
+    0.0,
+    10586.579220775811
+  ],
+  "v0": 10586.579220775811,
+  "G": 6.674e-11,
+  "M": 5.972e+24,
+  "mu": 398571280000000.0,
+  "integrator": "RK4",
+  "dt_phys": 0.25,
+  "code_version": "report_generation"
+}
