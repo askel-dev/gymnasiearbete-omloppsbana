@@ -1,4 +1,16 @@
-# Omloppsbana – v1.5
+```
+╔═══════════════════════════════════════╗
+║                                       ║
+║           O r b i t L a b             ║
+║                                       ║
+║   En interaktiv omloppsbana-simulator ║
+║                                       ║
+╚═══════════════════════════════════════╝
+```
+
+# OrbitLab – v1.5
+
+**En interaktiv omloppsbana-simulator**
 
 Interaktiv RK4/Euler-simulator för omloppsbanor med stöd för flera planeter, procedurellt genererade texturer, inbyggd datalogging, analys och parameterstudier.
 

@@ -1,5 +1,13 @@
-﻿# src/orbit_pygame.py
-"""Simplified orbital mechanics simulation using Pygame."""
+# src/main.py
+"""
+OrbitLab - Interactive Orbit Simulator
+=======================================
+
+An educational platform for exploring orbital mechanics through
+numerical integration and real-time visualization.
+
+Version: 1.5
+"""
 
 import math
 import os
@@ -1072,7 +1080,7 @@ def run_main_menu(
         starfield.draw(screen, drift_x, drift_y)
         
         # Title with shadow
-        title_text = "SIMULERING AV OMLOPPSBANA"
+        title_text = "ORBITLAB"
         # Shadow (offset by 2 pixels)
         shadow_surf = title_font.render(title_text, True, (0, 0, 0))
         shadow_rect = shadow_surf.get_rect(center=(WIDTH // 2 + 2, 50 + 2))
@@ -1316,7 +1324,7 @@ def run_main_menu(
 # =======================
 def main():
     pygame.init()
-    pygame.display.set_caption("Gymnasiearbete - Simulering av omloppsbana")
+    pygame.display.set_caption("OrbitLab – Interactive Orbit Simulator")
     
     font_fps = pygame.font.SysFont("consolas", 14)
 
@@ -1556,7 +1564,7 @@ def main():
             "dt_phys": DT_PHYS,
             "start_speed": REAL_TIME_SPEED,
             "log_strategy": "every_20_steps",
-            "code_version": "v1.5",
+            "code_version": "OrbitLab v1.5",
         }
         logger.write_meta(meta)
         log_step_counter = 0
