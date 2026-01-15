@@ -10,19 +10,83 @@
 
 # OrbitLab – v1.5
 
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Status](https://img.shields.io/badge/Status-Complete-success)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
+![Code Size](https://img.shields.io/github/languages/code-size/username/OrbitLab?color=orange)
+
 **En interaktiv omloppsbana-simulator**
 
 Interaktiv RK4/Euler-simulator för omloppsbanor med stöd för flera planeter, procedurellt genererade texturer, inbyggd datalogging, analys och parameterstudier.
 
-## Förutsättningar
-
-* Python 3.10+
-* `pygame`, `numpy`, `matplotlib`
-
-Installera beroenden via pip om de saknas:
+## ⚡ Quick Start
 
 ```bash
-pip install pygame numpy matplotlib
+# 1. Clone the repository
+git clone https://github.com/yourusername/OrbitLab.git
+cd OrbitLab
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Run the simulator
+python src/main.py
+```
+
+**That's it!** The simulator should launch immediately.
+
+## 📋 System Requirements
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| **Python** | 3.10 | 3.11+ |
+| **RAM** | 512 MB | 1 GB+ |
+| **Storage** | 50 MB | 100 MB |
+| **Display** | 1024x768 | 1920x1080 |
+| **OS** | Windows 10, macOS 10.15, Linux | Latest versions |
+
+## 🔧 Installation
+
+### Option 1: Quick Install (Recommended)
+
+```bash
+# Clone and install in one go
+git clone https://github.com/yourusername/OrbitLab.git
+cd OrbitLab
+pip install -r requirements.txt
+python src/main.py
+```
+
+### Option 2: Manual Install
+
+```bash
+# Install dependencies individually
+pip install pygame>=2.5.0
+pip install numpy>=1.24.0
+pip install matplotlib>=3.7.0
+
+# Run the simulator
+python src/main.py
+```
+
+### Option 3: Using Virtual Environment (Cleanest)
+
+```bash
+# Create virtual environment
+python -m venv orbitlab_env
+
+# Activate it
+# Windows:
+orbitlab_env\Scripts\activate
+# macOS/Linux:
+source orbitlab_env/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run
+python src/main.py
 ```
 
 ## Kör simulatorn

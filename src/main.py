@@ -1069,7 +1069,7 @@ def run_main_menu(
         
         # =====================
         # Render
-        # =====================
+           # =====================
         screen.fill(BACKGROUND_COLOR)
         
         # Draw starfield with gentle animated drift
